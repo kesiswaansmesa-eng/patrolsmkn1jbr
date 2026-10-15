@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { 
   Settings, Database, Key, CheckCircle, Copy, 
-  ExternalLink, RotateCcw, Save, ShieldAlert, Code2, AlertCircle 
+  ExternalLink, RotateCcw, Save, ShieldAlert, Code2, AlertCircle, RefreshCw, Sparkles 
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { setCustomSupabaseConfig, clearCustomSupabaseConfig } from '../../lib/supabaseClient';
+import { setCustomSupabaseConfig, clearCustomSupabaseConfig, getSupabase } from '../../lib/supabaseClient';
+import { FULL_SUPABASE_SQL } from '../../db/fullSql';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -13,10 +14,15 @@ export const SettingsView: React.FC = () => {
   } = useApp();
 
   // Supabase Config Form
-  const [urlInput, setUrlInput] = useState(supabaseUrl || '');
-  const [keyInput, setKeyInput] = useState('');
+  const [urlInput, setUrlInput] = useState(supabaseUrl || 'https://qlalmzipltsdndecsjdc.supabase.co');
+  const [keyInput, setKeyInput] = useState('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsYWxtemlwbHRzZG5kZWNzamRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNzMxMzksImV4cCI6MjEwNzY0OTEzOX0.A6GT174Kh65SiTivefnDqHUj20CqJSWBWJTtmMyKbTs');
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
+  const [testStatus, setTestStatus] = useState<{ loading: boolean; message: string; type: 'success' | 'error' | 'idle' }>({
+    loading: false,
+    message: '',
+    type: 'idle',
+  });
 
   // App Settings Form
   const [appForm, setAppForm] = useState({
@@ -42,7 +48,7 @@ export const SettingsView: React.FC = () => {
   };
 
   const handleClearSupabase = () => {
-    if (confirm('Lepaskan koneksi Supabase kustom dan kembali ke Mode Demo Lokal?')) {
+    if (confirm('Lepaskan koneksi Supabase kustom dan kembali ke default?')) {
       clearCustomSupabaseConfig();
       window.location.reload();
     }
@@ -61,43 +67,50 @@ export const SettingsView: React.FC = () => {
     alert('Pengaturan sekolah berhasil diperbarui.');
   };
 
-  const sqlSampleSnippet = `-- Jalankan SQL ini pada SQL Editor di Supabase Dashboard Anda:
--- Silakan salin skrip lengkap dari file: /src/db/supabase_schema.sql
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+  const handleTestConnection = async () => {
+    setTestStatus({ loading: true, message: 'Menguji koneksi ke Supabase...', type: 'idle' });
+    const client = getSupabase();
+    if (!client) {
+      setTestStatus({ loading: false, message: 'Klien Supabase belum dikonfigurasi.', type: 'error' });
+      return;
+    }
 
-CREATE TABLE IF NOT EXISTS public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT UNIQUE NOT NULL,
-  full_name TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'wali_kelas',
-  assigned_department_id UUID,
-  assigned_class_id UUID,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS public.lateness_records (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  student_id UUID NOT NULL,
-  student_name TEXT NOT NULL,
-  nis TEXT NOT NULL,
-  class_name TEXT NOT NULL,
-  department_code TEXT NOT NULL,
-  event_date DATE NOT NULL,
-  arrival_time TIME NOT NULL,
-  late_duration_minutes INT NOT NULL,
-  reason_name TEXT NOT NULL,
-  followup_status TEXT DEFAULT 'belum_ditindaklanjuti',
-  is_cancelled BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-ALTER TABLE public.lateness_records ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Akses Terverifikasi" ON public.lateness_records FOR ALL TO authenticated USING (true);`;
+    try {
+      const { data, error } = await client.from('lateness_records').select('id').limit(1);
+      if (error) {
+        if (error.code === '42P01' || error.message.includes('does not exist')) {
+          setTestStatus({
+            loading: false,
+            message: `Koneksi berhasil ke proyek qlalmzipltsdndecsjdc! Namun tabel belum dibuat. Silakan salin "SQL Migration Lengkap" di bawah dan jalankan di SQL Editor Supabase Anda.`,
+            type: 'error',
+          });
+        } else {
+          setTestStatus({
+            loading: false,
+            message: `Pesan Supabase: ${error.message}`,
+            type: 'error',
+          });
+        }
+      } else {
+        setTestStatus({
+          loading: false,
+          message: `Koneksi Berhasil! Tabel lateness_records siap digunakan di Supabase.`,
+          type: 'success',
+        });
+      }
+    } catch (err: any) {
+      setTestStatus({
+        loading: false,
+        message: `Gagal terkoneksi: ${err.message || 'Periksa jaringan internet'}`,
+        type: 'error',
+      });
+    }
+  };
 
   const handleCopySql = () => {
-    navigator.clipboard.writeText(sqlSampleSnippet);
+    navigator.clipboard.writeText(FULL_SUPABASE_SQL);
     setCopiedSql(true);
-    setTimeout(() => setCopiedSql(false), 2000);
+    setTimeout(() => setCopiedSql(false), 2500);
   };
 
   return (
@@ -173,7 +186,7 @@ CREATE POLICY "Akses Terverifikasi" ON public.lateness_records FOR ALL TO authen
             </p>
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2">
             <button
               type="submit"
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
@@ -181,39 +194,74 @@ CREATE POLICY "Akses Terverifikasi" ON public.lateness_records FOR ALL TO authen
               <Save className="w-4 h-4" />
               Simpan & Hubungkan ke Supabase
             </button>
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testStatus.loading}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${testStatus.loading ? 'animate-spin' : ''}`} />
+              {testStatus.loading ? 'Menguji...' : 'Tes Koneksi Tabel'}
+            </button>
             {isSupabaseConnected && (
               <button
                 type="button"
                 onClick={handleClearSupabase}
                 className="px-3.5 py-2 border border-slate-300 hover:bg-slate-100 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
               >
-                Putuskan Koneksi Kustom
+                Reset Default
               </button>
             )}
           </div>
+
+          {/* Test Status Feedback */}
+          {testStatus.message && (
+            <div className={`p-3.5 rounded-xl border text-xs flex items-start gap-2.5 mt-2 ${
+              testStatus.type === 'success' 
+                ? 'bg-emerald-50 text-emerald-900 border-emerald-300' 
+                : 'bg-amber-50 text-amber-900 border-amber-300'
+            }`}>
+              {testStatus.type === 'success' ? (
+                <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+              )}
+              <div className="leading-relaxed">
+                {testStatus.message}
+              </div>
+            </div>
+          )}
         </form>
 
         {/* SQL Migration Script Box */}
         <div className="pt-4 border-t border-slate-100">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-              <Code2 className="w-4 h-4 text-blue-600" />
-              Skema Tabel & RLS Migration (supabase_schema.sql)
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+            <div>
+              <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                <Code2 className="w-4 h-4 text-blue-600" />
+                Skrip SQL Migration Lengkap (15 Tabel + RLS 5 Peran)
+              </span>
+              <p className="text-[11px] text-slate-500">
+                Jalankan skrip ini sekali saja di menu <strong>SQL Editor</strong> pada Supabase Dashboard Anda.
+              </p>
+            </div>
             <button
               onClick={handleCopySql}
-              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer self-start sm:self-auto shadow-xs"
             >
               <Copy className="w-3.5 h-3.5" />
-              {copiedSql ? 'Tersalin!' : 'Salin Contoh SQL'}
+              {copiedSql ? 'Tersalin ke Clipboard!' : 'Salin Seluruh SQL Migration (1-Klik)'}
             </button>
           </div>
-          <pre className="p-3 bg-slate-900 text-slate-300 rounded-xl text-[11px] font-mono overflow-x-auto max-h-40">
-            {sqlSampleSnippet}
+          <pre className="p-3 bg-slate-900 text-slate-300 rounded-xl text-[11px] font-mono overflow-x-auto max-h-48 leading-relaxed">
+            {FULL_SUPABASE_SQL.substring(0, 1500)}...
           </pre>
-          <p className="text-[11px] text-slate-500 mt-1.5">
-            File skrip DDL lengkap dengan 15 tabel dan RLS 5 peran tersedia pada <code>/src/db/supabase_schema.sql</code>.
-          </p>
+          <div className="mt-2 p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+            <p>
+              <strong>Tips Peluncuran Supabase:</strong> Klik tombol biru <em>"Salin Seluruh SQL Migration"</em> di atas, buka <a href="https://supabase.com/dashboard/project/qlalmzipltsdndecsjdc/sql" target="_blank" rel="noreferrer" className="underline font-bold text-blue-700">Supabase SQL Editor Patrolsmkn1jbr</a>, tempel (*paste*), lalu klik tombol <strong>Run</strong>. Semua 15 tabel, indeks, dan RLS langsung aktif!
+            </p>
+          </div>
         </div>
       </div>
 

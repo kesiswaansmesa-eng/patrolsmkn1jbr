@@ -1,6 +1,16 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Baca konfigurasi dari environment variables atau runtime localStorage
+// Default Supabase project credentials for Patrolsmkn1jbr
+export const DEFAULT_SUPABASE_URL = 'https://qlalmzipltsdndecsjdc.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsYWxtemlwbHRzZG5kZWNzamRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIwNzMxMzksImV4cCI6MjEwNzY0OTEzOX0.A6GT174Kh65SiTivefnDqHUj20CqJSWBWJTtmMyKbTs';
+
+// Normalisasi URL Supabase (buang /rest/v1/ atau slash di akhir jika ada)
+export const normalizeSupabaseUrl = (url: string): string => {
+  if (!url) return '';
+  return url.trim().replace(/\/rest\/v1\/?$/i, '').replace(/\/$/, '');
+};
+
+// Baca konfigurasi dari localStorage, environment variables, atau default kredensial
 export const getSupabaseConfig = () => {
   const envUrl = import.meta.env.VITE_SUPABASE_URL;
   const envKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -8,8 +18,9 @@ export const getSupabaseConfig = () => {
   const savedUrl = typeof window !== 'undefined' ? localStorage.getItem('patrol_smesa_supabase_url') : null;
   const savedKey = typeof window !== 'undefined' ? localStorage.getItem('patrol_smesa_supabase_anon_key') : null;
 
-  const url = savedUrl || envUrl;
-  const key = savedKey || envKey;
+  const rawUrl = savedUrl || envUrl || DEFAULT_SUPABASE_URL;
+  const key = savedKey || envKey || DEFAULT_SUPABASE_ANON_KEY;
+  const url = normalizeSupabaseUrl(rawUrl);
 
   const isConfigured = Boolean(
     url && 
@@ -46,7 +57,8 @@ export const getSupabase = (): SupabaseClient | null => {
 
 export const setCustomSupabaseConfig = (url: string, key: string) => {
   if (typeof window !== 'undefined') {
-    localStorage.setItem('patrol_smesa_supabase_url', url.trim());
+    const cleanUrl = normalizeSupabaseUrl(url);
+    localStorage.setItem('patrol_smesa_supabase_url', cleanUrl);
     localStorage.setItem('patrol_smesa_supabase_anon_key', key.trim());
     supabaseInstance = null; // reset client
   }
