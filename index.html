@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Defensive shim: allow browser extensions to set window.fetch even if original descriptor has only a getter
+      (function() {
+        try {
+          var origFetch = window.fetch;
+          var desc = Object.getOwnPropertyDescriptor(window, 'fetch') || 
+                     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'fetch');
+          if (!desc || (!desc.writable && !desc.set)) {
+            var currentFetch = origFetch;
+            Object.defineProperty(window, 'fetch', {
+              get: function() { return currentFetch; },
+              set: function(fn) { currentFetch = fn; },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {
+          console.warn('Fetch setter shim error:', e);
+        }
+      })();
+    </script>
+    <title>PATROL SMESA - Sistem Tracing Keterlambatan SMKN 1 Jember</title>
+    <meta name="description" content="Pencatatan & Tracing Keterlambatan Siswa SMK Negeri 1 Jember: Catat Cepat, Data Akurat, Pembinaan Tepat dengan Dashboard Terintegrasi dan Analisis Realtime." />
+    <meta property="og:title" content="PATROL SMESA - Sistem Tracing Keterlambatan SMKN 1 Jember" />
+    <meta property="og:description" content="Pencatatan & Tracing Keterlambatan Siswa SMK Negeri 1 Jember: Catat Cepat, Data Akurat, Pembinaan Tepat dengan Dashboard Terintegrasi dan Analisis Realtime." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://iili.io/nhMcBoB.md.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/png" href="https://iili.io/nhMcBoB.md.png" />
+    <link rel="apple-touch-icon" href="https://iili.io/nhMcBoB.md.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  </head>
+  <body class="bg-slate-50 text-slate-800 antialiased font-['Plus_Jakarta_Sans',sans-serif]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,6 @@
+{
+  "name": "PATROL SMESA - Sistem Tracing Keterlambatan SMKN 1 Jember",
+  "description": "Pencatatan & Tracing Keterlambatan Siswa SMK Negeri 1 Jember: Catat Cepat, Data Akurat, Pembinaan Tepat dengan Dashboard Terintegrasi dan Analisis Realtime.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
