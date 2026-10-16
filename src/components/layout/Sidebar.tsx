@@ -20,7 +20,8 @@ export type NavTab =
   | 'coaching' 
   | 'reports' 
   | 'audit' 
-  | 'settings';
+  | 'settings'
+  | 'login';
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -45,20 +46,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
       case 'analytics':
       case 'leaderboard':
       case 'reports':
-        return true; // All 5 roles can view with scoped data
+        return true; // All roles can view with scoped data
       case 'record':
-        return role === 'admin' || role === 'tim_kesiswaan';
+        return role === 'admin' || role === 'tim_kesiswaan' || role === 'petugas_piket';
       case 'coaching':
         return role === 'admin' || role === 'tim_kesiswaan' || role === 'wali_kelas' || role === 'kkk';
       case 'students':
       case 'classes':
       case 'departments':
-        return role === 'admin' || role === 'tim_kesiswaan' || role === 'kkk' || role === 'wali_kelas';
+        return role === 'admin' || role === 'tim_kesiswaan' || role === 'kkk' || role === 'wali_kelas' || role === 'petugas_piket';
       case 'users':
       case 'audit':
         return role === 'admin';
       case 'settings':
         return role === 'admin' || role === 'kepala_sekolah' || role === 'tim_kesiswaan';
+      case 'login':
+        return true;
       default:
         return false;
     }
@@ -112,7 +115,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 alt="Logo SMK Negeri 1 Jember" 
                 className="w-full h-full object-contain"
                 onError={(e) => {
-                  // Fallback to text if image fails
                   const target = e.currentTarget;
                   target.style.display = 'none';
                   if (target.parentElement) {
@@ -138,18 +140,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* User Scope Indicator */}
         <div className="px-4 py-3 bg-[#0d1a33] border-b border-slate-800/60 text-xs">
-          <div className="flex items-center justify-between text-slate-400 mb-1">
-            <span className="text-[10px] uppercase tracking-wider font-semibold">Ruang Lingkup Hak Akses:</span>
+          <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+            <span>Peran Akses:</span>
+            <span className="font-mono text-[10px] text-amber-400 capitalize">
+              {currentUser.role.replace('_', ' ')}
+            </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className={`inline-block w-2 h-2 rounded-full ${
+            <span className={`w-2 h-2 rounded-full ${
               currentUser.role === 'admin' ? 'bg-purple-400' :
-              currentUser.role === 'kepala_sekolah' ? 'bg-blue-400' :
+              currentUser.role === 'petugas_piket' ? 'bg-amber-400' :
               currentUser.role === 'tim_kesiswaan' ? 'bg-emerald-400' :
-              currentUser.role === 'kkk' ? 'bg-amber-400' : 'bg-cyan-400'
+              currentUser.role === 'kkk' ? 'bg-teal-400' :
+              currentUser.role === 'kepala_sekolah' ? 'bg-blue-400' : 'bg-cyan-400'
             }`} />
             <span className="font-semibold text-white truncate text-xs">
               {currentUser.role === 'admin' && 'Akses Penuh Administrator'}
+              {currentUser.role === 'petugas_piket' && 'Piket Gerbang Pagi'}
               {currentUser.role === 'kepala_sekolah' && 'Monitoring Sekolah'}
               {currentUser.role === 'tim_kesiswaan' && 'Operasional Kesiswaan'}
               {currentUser.role === 'kkk' && 'Jurusan DKV (Ketua KKK)'}
@@ -160,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Nav Items List */}
         <div className="flex-1 overflow-y-auto px-3 py-4 space-y-1 custom-scrollbar">
-          <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-300">
+          <div className="px-3 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
             Menu Navigasi
           </div>
           {filteredItems.map(item => {
@@ -170,7 +177,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleSelect(item.id)}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-xs font-semibold transition-all group ${
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg text-xs font-semibold transition-all group cursor-pointer ${
                   isActive
                     ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
                     : item.highlight
@@ -203,13 +210,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </div>
 
+        {/* Switch / View Login Page Action */}
+        <div className="px-3 pb-3">
+          <button
+            onClick={() => handleSelect('login')}
+            className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-bold transition-all border cursor-pointer group ${
+              currentTab === 'login'
+                ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/20'
+                : 'bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/60'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <LogOut className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+              <span>Halaman Login / Ganti Akun</span>
+            </div>
+            <span className="text-[10px] font-mono bg-slate-900 px-1.5 py-0.5 rounded text-amber-300 border border-slate-700">
+              6 Akun
+            </span>
+          </button>
+        </div>
+
         {/* Footer Info */}
         <div className="p-4 border-t border-slate-800 bg-[#091222] text-[11px] text-slate-300">
           <div className="flex items-center justify-between">
             <span className="font-medium">SMK Negeri 1 Jember</span>
             <span className="text-amber-400 font-mono text-[10px]">WIB (UTC+7)</span>
           </div>
-          <p className="text-[10px] text-slate-300 mt-0.5">Jawa Timur, Indonesia</p>
+          <p className="text-[10px] text-slate-400 mt-0.5">Jawa Timur, Indonesia</p>
         </div>
       </aside>
     </>

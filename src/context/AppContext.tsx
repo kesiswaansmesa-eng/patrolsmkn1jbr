@@ -17,6 +17,15 @@ interface AppContextType {
   setCurrentUser: (user: UserProfile) => void;
   switchRole: (role: UserRole) => void;
   users: UserProfile[];
+  isAuthenticated: boolean;
+  loginWithRole: (role: UserRole, password?: string) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  loginWithEmail: (email: string, password?: string) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  logout: () => void;
+  
+  // User Management (RBAC) CRUD & Password Management
+  addUser: (user: Omit<UserProfile, 'id' | 'created_at'> & { password?: string }) => Promise<{ success: boolean; message: string; user?: UserProfile }>;
+  updateUser: (id: string, user: Partial<UserProfile> & { password?: string }) => Promise<{ success: boolean; message: string }>;
+  deleteUser: (id: string) => Promise<{ success: boolean; message: string }>;
   
   // Data Lists
   departments: Department[];
@@ -93,13 +102,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Current user state
   const [users, setUsers] = useState<UserProfile[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.USERS);
-    return saved ? JSON.parse(saved) : DEMO_USERS;
+    if (!saved) return DEMO_USERS;
+    try {
+      const parsed = JSON.parse(saved) as UserProfile[];
+      const updated: UserProfile[] = parsed.map(u => {
+        const demoMatch = DEMO_USERS.find(d => d.id === u.id || d.email.toLowerCase() === u.email.toLowerCase() || d.role === u.role);
+        return {
+          ...u,
+          password: u.password || (demoMatch ? demoMatch.password : 'smesa123'),
+        };
+      });
+      // Ensure all 6 roles exist in the users list
+      for (const demoU of DEMO_USERS) {
+        if (!updated.some(u => u.role === demoU.role)) {
+          updated.push(demoU);
+        }
+      }
+      return updated;
+    } catch {
+      return DEMO_USERS;
+    }
   });
 
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
     const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
     const found = DEMO_USERS.find(u => u.id === savedUserId);
     return found || DEMO_USERS[0]; // Default to Admin
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const saved = localStorage.getItem('patrol_smesa_is_authenticated');
+    return saved !== null ? saved === 'true' : false;
   });
 
   // Master Data
@@ -245,7 +278,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  // Role Switcher for seamless testing of all 5 personas
+  // Role Switcher & Database Login
   const switchRole = useCallback((role: UserRole) => {
     const targetUser = users.find(u => u.role === role) || {
       id: 'user-' + role,
@@ -256,12 +289,118 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       created_at: new Date().toISOString(),
     };
     setCurrentUser(targetUser);
+    setIsAuthenticated(true);
+    localStorage.setItem('patrol_smesa_is_authenticated', 'true');
+    localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, targetUser.id);
     logAudit('LOGIN', 'AUTENTIKASI', `Beralih ke peran ${role.toUpperCase()}: ${targetUser.full_name}`);
   }, [users, logAudit]);
 
+  const loginWithEmail = async (email: string, password?: string): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = (password || '').trim();
+
+    if (!cleanPassword) {
+      return { 
+        success: false, 
+        message: 'Password wajib dimasukkan! Silakan ketik password akun Anda.' 
+      };
+    }
+
+    // 1. Check local state users (Master Data Akun yang diset Admin)
+    const foundUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (foundUser) {
+      if (foundUser.status === 'inactive') {
+        return {
+          success: false,
+          message: 'Akun ini sedang berstatus NONAKTIF. Silakan hubungi Administrator.'
+        };
+      }
+
+      const expectedPassword = foundUser.password || 'smesa123';
+      if (cleanPassword !== expectedPassword) {
+        logAudit('LOGIN', 'AUTENTIKASI', `Gagal login: Password salah untuk akun ${foundUser.email}`);
+        return { 
+          success: false, 
+          message: 'Password yang Anda masukkan salah! Pastikan password sesuai dengan yang diset oleh Admin di Master Data Akun.' 
+        };
+      }
+
+      // Sync with Supabase if available
+      let syncedUser = foundUser;
+      const supabase = getSupabase();
+      if (supabase) {
+        try {
+          const { data } = await supabase.from('profiles').select('*').eq('id', foundUser.id).limit(1);
+          if (data && data.length > 0) {
+            syncedUser = { ...syncedUser, ...(data[0] as Partial<UserProfile>) };
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setCurrentUser(syncedUser);
+      setIsAuthenticated(true);
+      localStorage.setItem('patrol_smesa_is_authenticated', 'true');
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, syncedUser.id);
+      logAudit('LOGIN', 'AUTENTIKASI', `Login berhasil sebagai ${syncedUser.full_name} (${syncedUser.role.toUpperCase()})`);
+      return { success: true, message: `Login berhasil! Selamat datang, ${syncedUser.full_name}`, user: syncedUser };
+    }
+
+    // 2. Check live Supabase database
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.from('profiles').select('*').ilike('email', cleanEmail).limit(1);
+        if (!error && data && data.length > 0) {
+          const dbUser = data[0] as UserProfile;
+          const expectedPassword = dbUser.password || 'smesa123';
+          if (cleanPassword !== expectedPassword) {
+            return {
+              success: false,
+              message: 'Password yang Anda masukkan salah. Hubungi Administrator jika lupa password.',
+            };
+          }
+          setCurrentUser(dbUser);
+          setIsAuthenticated(true);
+          localStorage.setItem('patrol_smesa_is_authenticated', 'true');
+          localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, dbUser.id);
+          logAudit('LOGIN', 'AUTENTIKASI', `Login Supabase Database berhasil: ${dbUser.full_name} (${dbUser.role})`);
+          return { success: true, message: `Selamat datang, ${dbUser.full_name}`, user: dbUser };
+        }
+      } catch (err) {
+        console.warn('Supabase DB lookup failed:', err);
+      }
+    }
+
+    return { 
+      success: false, 
+      message: `Akun dengan email "${email}" tidak ditemukan dalam database sistem.` 
+    };
+  };
+
+  const loginWithRole = async (role: UserRole, password?: string): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    const targetUser = users.find(u => u.role === role);
+    if (!targetUser) {
+      return { success: false, message: `Akun untuk peran ${role.toUpperCase()} tidak ditemukan.` };
+    }
+    return loginWithEmail(targetUser.email, password);
+  };
+
+  const logout = () => {
+    setIsAuthenticated(false);
+    localStorage.setItem('patrol_smesa_is_authenticated', 'false');
+    logAudit('LOGIN', 'AUTENTIKASI', `Pengguna ${currentUser.full_name} telah keluar (logout).`);
+  };
+
   // RBAC Scoping Helpers
   const scopedRecords = useMemo(() => {
-    if (currentUser.role === 'admin' || currentUser.role === 'kepala_sekolah' || currentUser.role === 'tim_kesiswaan') {
+    if (
+      currentUser.role === 'admin' || 
+      currentUser.role === 'kepala_sekolah' || 
+      currentUser.role === 'tim_kesiswaan' ||
+      currentUser.role === 'petugas_piket'
+    ) {
       return records;
     }
     if (currentUser.role === 'kkk') {
@@ -278,7 +417,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [records, currentUser, departments, classes]);
 
   const scopedStudents = useMemo(() => {
-    if (currentUser.role === 'admin' || currentUser.role === 'kepala_sekolah' || currentUser.role === 'tim_kesiswaan') {
+    if (
+      currentUser.role === 'admin' || 
+      currentUser.role === 'kepala_sekolah' || 
+      currentUser.role === 'tim_kesiswaan' ||
+      currentUser.role === 'petugas_piket'
+    ) {
       return students;
     }
     if (currentUser.role === 'kkk') {
@@ -293,7 +437,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [students, currentUser, departments]);
 
   const scopedClasses = useMemo(() => {
-    if (currentUser.role === 'admin' || currentUser.role === 'kepala_sekolah' || currentUser.role === 'tim_kesiswaan') {
+    if (
+      currentUser.role === 'admin' || 
+      currentUser.role === 'kepala_sekolah' || 
+      currentUser.role === 'tim_kesiswaan' ||
+      currentUser.role === 'petugas_piket'
+    ) {
       return classes;
     }
     if (currentUser.role === 'kkk') {
@@ -628,6 +777,133 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Master Data Akun (User Management & RBAC CRUD)
+  const addUser = async (userData: Omit<UserProfile, 'id' | 'created_at'> & { password?: string }) => {
+    const cleanEmail = userData.email.trim().toLowerCase();
+    if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, message: `Akun dengan email ${cleanEmail} sudah terdaftar!` };
+    }
+
+    const newUser: UserProfile = {
+      ...userData,
+      id: 'user-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      email: cleanEmail,
+      full_name: userData.full_name.trim(),
+      password: userData.password?.trim() || 'smesa123',
+      status: userData.status || 'active',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    setUsers(prev => [...prev, newUser]);
+
+    // Sync to Supabase if connected
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('profiles').insert({
+          id: newUser.id,
+          email: newUser.email,
+          full_name: newUser.full_name,
+          role: newUser.role,
+          nip: newUser.nip || null,
+          assigned_department_id: newUser.assigned_department_id || null,
+          assigned_class_id: newUser.assigned_class_id || null,
+          status: newUser.status,
+        });
+      } catch (err) {
+        console.warn('Supabase profile insert error:', err);
+      }
+    }
+
+    logAudit('CREATE', 'PENGGUNA', `Menambahkan akun baru: ${newUser.full_name} (${newUser.role}) dengan password baru.`, newUser.id);
+    return { success: true, message: `Akun ${newUser.full_name} berhasil ditambahkan!`, user: newUser };
+  };
+
+  const updateUser = async (id: string, updatedData: Partial<UserProfile> & { password?: string }) => {
+    const existing = users.find(u => u.id === id);
+    if (!existing) {
+      return { success: false, message: 'Akun tidak ditemukan.' };
+    }
+
+    // Check email uniqueness if email changed
+    if (updatedData.email && updatedData.email.toLowerCase() !== existing.email.toLowerCase()) {
+      const emailTaken = users.some(u => u.id !== id && u.email.toLowerCase() === updatedData.email!.toLowerCase());
+      if (emailTaken) {
+        return { success: false, message: `Email ${updatedData.email} sudah digunakan oleh akun lain.` };
+      }
+    }
+
+    const updatedUser: UserProfile = {
+      ...existing,
+      ...updatedData,
+      password: updatedData.password !== undefined ? updatedData.password.trim() : existing.password,
+      updated_at: new Date().toISOString(),
+    };
+
+    setUsers(prev => prev.map(u => u.id === id ? updatedUser : u));
+
+    // If updating the active user, update currentUser state
+    if (currentUser.id === id) {
+      setCurrentUser(updatedUser);
+    }
+
+    // Sync to Supabase if connected
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('profiles').update({
+          full_name: updatedUser.full_name,
+          email: updatedUser.email,
+          role: updatedUser.role,
+          nip: updatedUser.nip || null,
+          assigned_department_id: updatedUser.assigned_department_id || null,
+          assigned_class_id: updatedUser.assigned_class_id || null,
+          status: updatedUser.status,
+          updated_at: new Date().toISOString(),
+        }).eq('id', id);
+      } catch (err) {
+        console.warn('Supabase profile update error:', err);
+      }
+    }
+
+    logAudit('UPDATE', 'PENGGUNA', `Memperbarui akun pengguna: ${updatedUser.full_name} (${updatedUser.role})`, id);
+    return { success: true, message: `Data akun ${updatedUser.full_name} berhasil diperbarui.` };
+  };
+
+  const deleteUser = async (id: string) => {
+    const targetUser = users.find(u => u.id === id);
+    if (!targetUser) {
+      return { success: false, message: 'Akun tidak ditemukan.' };
+    }
+
+    if (currentUser.id === id) {
+      return { success: false, message: 'Tidak dapat menghapus akun yang sedang Anda gunakan saat ini.' };
+    }
+
+    if (targetUser.role === 'admin') {
+      const adminCount = users.filter(u => u.role === 'admin').length;
+      if (adminCount <= 1) {
+        return { success: false, message: 'Gagal menghapus: Sistem memerlukan minimal 1 akun Administrator aktif.' };
+      }
+    }
+
+    setUsers(prev => prev.filter(u => u.id !== id));
+
+    // Supabase delete if connected
+    const supabase = getSupabase();
+    if (supabase) {
+      try {
+        await supabase.from('profiles').delete().eq('id', id);
+      } catch (err) {
+        console.warn('Supabase profile delete error:', err);
+      }
+    }
+
+    logAudit('DELETE', 'PENGGUNA', `Menghapus akun pengguna: ${targetUser.full_name} (${targetUser.email})`, id);
+    return { success: true, message: `Akun ${targetUser.full_name} berhasil dihapus dari sistem.` };
+  };
+
   const resetToDemoData = () => {
     if (confirm('Kembalikan seluruh data ke Data Demo Awal SMK Negeri 1 Jember? Transaksi yang belum disimpan ke Supabase akan ter-reset.')) {
       setRecords(INITIAL_RECORDS);
@@ -650,6 +926,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setCurrentUser,
         switchRole,
         users,
+        isAuthenticated,
+        loginWithRole,
+        loginWithEmail,
+        logout,
         departments,
         classes,
         students,
@@ -671,6 +951,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateStudent,
         deleteStudent,
         importStudentsCSV,
+        addUser,
+        updateUser,
+        deleteUser,
         addClass,
         updateClass,
         deleteClass,

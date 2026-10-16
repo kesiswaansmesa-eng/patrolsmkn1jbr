@@ -1,16 +1,18 @@
-export type UserRole = 'admin' | 'kepala_sekolah' | 'tim_kesiswaan' | 'kkk' | 'wali_kelas';
+export type UserRole = 'admin' | 'kepala_sekolah' | 'tim_kesiswaan' | 'petugas_piket' | 'kkk' | 'wali_kelas';
 
 export interface UserProfile {
   id: string;
   email: string;
   full_name: string;
   role: UserRole;
+  password?: string;
   nip?: string;
   assigned_department_id?: string; // For KKK
   assigned_class_id?: string; // For Wali Kelas
   avatar_url?: string;
   status: 'active' | 'inactive';
   created_at: string;
+  updated_at?: string;
 }
 
 export interface Department {
