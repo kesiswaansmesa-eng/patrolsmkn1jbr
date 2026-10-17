@@ -13,10 +13,12 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenSettings, onOpenLogin }) => {
-  const { currentUser, switchRole, logout, isSupabaseConnected, refreshData } = useApp();
+  const { 
+    currentUser, switchRole, logout, isGoogleSheetsConnected, 
+    refreshData, isSyncing, lastSyncedAt, isAutoSyncEnabled 
+  } = useApp();
   const [timeWib, setTimeWib] = useState('');
   const [showRoleModal, setShowRoleModal] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     const updateTime = () => {
@@ -44,9 +46,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenSettin
   }, []);
 
   const handleRefresh = async () => {
-    setIsRefreshing(true);
     await refreshData();
-    setTimeout(() => setIsRefreshing(false), 600);
   };
 
   // 6 Akun & Peran Lengkap: admin, petugas_piket, kkk, wali_kelas, kepala_sekolah, tim_kesiswaan
@@ -135,30 +135,41 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenSettin
 
         {/* Right Side: Supabase status, Role switcher, profile & logout */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {/* Supabase status badge */}
+          {/* Google Sheets status badge */}
           <button
             onClick={onOpenSettings}
             className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
-              isSupabaseConnected
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+              isGoogleSheetsConnected
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
+                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
             }`}
-            title="Klik untuk konfigurasi database Supabase (Patrolsmkn1jbr)"
+            title={
+              isGoogleSheetsConnected
+                ? `Terhubung ke Google Spreadsheet • Terakhir sinkron: ${lastSyncedAt ? lastSyncedAt.toLocaleTimeString('id-ID') : 'Baru saja'}${isAutoSyncEnabled ? ' • Realtime Auto-Sync Aktif' : ''}`
+                : 'Google Sheets belum terhubung. Klik untuk konfigurasi URL Apps Script'
+            }
           >
-            <Database className="w-3.5 h-3.5" />
+            {isGoogleSheetsConnected ? (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            ) : (
+              <Database className="w-3.5 h-3.5 text-amber-600" />
+            )}
             <span className="hidden sm:inline">
-              {isSupabaseConnected ? 'Supabase Live' : 'Mode Demo / Offline'}
+              {isGoogleSheetsConnected ? 'Google Sheets Live' : 'Mode Offline / Demo'}
             </span>
           </button>
 
           {/* Refresh button */}
           <button
             onClick={handleRefresh}
-            disabled={isRefreshing}
+            disabled={isSyncing}
             className={`p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all cursor-pointer ${
-              isRefreshing ? 'animate-spin text-blue-600' : ''
+              isSyncing ? 'animate-spin text-emerald-600' : ''
             }`}
-            title="Muat ulang data terbaru"
+            title="Sinkronkan data dari Google Sheets sekarang"
           >
             <RefreshCw className="w-4 h-4" />
           </button>

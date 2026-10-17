@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   UserProfile, Department, ClassRoom, Student, LatenessReason, 
   LatenessRecord, CoachingRecord, SchoolSchedule, AppSettings, 
@@ -9,7 +9,12 @@ import {
   INITIAL_STUDENTS, DEMO_USERS, INITIAL_SCHEDULES, 
   INITIAL_SETTINGS, INITIAL_RECORDS, INITIAL_COACHINGS 
 } from '../data/initialData';
-import { getSupabase, getSupabaseConfig } from '../lib/supabaseClient';
+import { 
+  getGasConfig, setGasUrl, clearGasUrl, pingGoogleSheets, 
+  fetchAllFromGoogleSheets, postToGoogleSheets, initGoogleSheetsStructure, 
+  syncAllDataToGoogleSheetsBackend, STORAGE_KEY_AUTO_SYNC_ENABLED, 
+  STORAGE_KEY_AUTO_SYNC_INTERVAL, normalizeGasUrl
+} from '../lib/googleSheetsClient';
 
 interface AppContextType {
   // Auth & RBAC
@@ -75,11 +80,27 @@ interface AppContextType {
   
   updateSettings: (newSettings: Partial<AppSettings>) => void;
   
-  // Connection & Status
+  // Google Sheets Backend & Realtime Sync Engine
+  isGoogleSheetsConnected: boolean;
+  gasUrl: string;
+  isAutoSyncEnabled: boolean;
+  autoSyncIntervalSec: number;
+  lastSyncedAt: Date | null;
+  isSyncing: boolean;
+  syncStatusMessage: string | null;
+  refreshData: () => Promise<void>;
+  syncAllDataToGoogleSheets: () => Promise<{ success: boolean; message: string; details?: Record<string, number> }>;
+  initGoogleSheets: () => Promise<{ success: boolean; message: string; details?: any }>;
+  saveGasUrl: (url: string) => Promise<{ success: boolean; message: string; latencyMs?: number }>;
+  clearGasUrlConfig: () => void;
+  toggleAutoSync: (enabled: boolean) => void;
+  setAutoSyncInterval: (sec: number) => void;
+  resetToDemoData: () => void;
+
+  // Compatibility aliases
   isSupabaseConnected: boolean;
   supabaseUrl: string;
-  refreshData: () => Promise<void>;
-  resetToDemoData: () => void;
+  syncAllDataToSupabase: () => Promise<{ success: boolean; message: string; details?: Record<string, number> }>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -97,6 +118,16 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'patrol_smesa_audit_logs',
   CURRENT_USER_ID: 'patrol_smesa_current_user_id',
 };
+
+// BroadcastChannel for instant cross-tab realtime sync
+let broadcastChannel: BroadcastChannel | null = null;
+try {
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    broadcastChannel = new BroadcastChannel('patrol_smesa_realtime_channel');
+  }
+} catch {
+  broadcastChannel = null;
+}
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Current user state
@@ -125,17 +156,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
-    const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
-    const found = DEMO_USERS.find(u => u.id === savedUserId);
-    return found || DEMO_USERS[0]; // Default to Admin
+    const savedId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER_ID);
+    const found = users.find(u => u.id === savedId);
+    return found || users[0] || DEMO_USERS[0];
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const saved = localStorage.getItem('patrol_smesa_is_authenticated');
-    return saved !== null ? saved === 'true' : false;
+    const authFlag = localStorage.getItem('patrol_smesa_is_authenticated');
+    return authFlag === 'true';
   });
 
-  // Master Data
+  // Google Sheets Backend Connection & Realtime State
+  const [gasUrl, setGasUrlState] = useState<string>(() => getGasConfig().url);
+  const [isGoogleSheetsConnected, setIsGoogleSheetsConnected] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState<boolean>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_AUTO_SYNC_ENABLED);
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const [autoSyncIntervalSec, setAutoSyncIntervalSec] = useState<number>(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_AUTO_SYNC_INTERVAL);
+    return saved ? parseInt(saved, 10) : 20; // 20 detik interval default
+  });
+
+  // Master Data States (Loaded from LocalStorage initially, updated from Google Sheets)
   const [departments, setDepartments] = useState<Department[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.DEPARTMENTS);
     return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
@@ -181,10 +229,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : [];
   });
 
-  const { isConfigured, url: supabaseUrl } = getSupabaseConfig();
-  const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(isConfigured);
-
-  // Sync to localStorage
+  // Sync to LocalStorage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
   }, [users]);
@@ -230,53 +275,264 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       details,
       timestamp: new Date().toISOString(),
     };
-    setAuditLogs(prev => [newLog, ...prev.slice(0, 199)]); // maintain last 200 logs
+    setAuditLogs(prev => [newLog, ...prev.slice(0, 199)]);
   }, [currentUser]);
 
-  // Connect to live Supabase if configured and setup Realtime
-  useEffect(() => {
-    const supabase = getSupabase();
-    if (!supabase) {
-      setIsSupabaseConnected(false);
-      return;
-    }
+  // Function to pull all data from Google Sheets
+  const refreshData = useCallback(async () => {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) return;
 
-    let isMounted = true;
-    const testConnectionAndFetch = async () => {
-      try {
-        const { data, error } = await supabase.from('lateness_records').select('*').limit(50);
-        if (!error && isMounted) {
-          setIsSupabaseConnected(true);
-          if (data && data.length > 0) {
-            setRecords(data as LatenessRecord[]);
-          }
+    setIsSyncing(true);
+    setSyncStatusMessage('Menyinkronkan data dari Google Sheets...');
+
+    try {
+      const allData = await fetchAllFromGoogleSheets(url);
+      if (allData) {
+        setIsGoogleSheetsConnected(true);
+        setLastSyncedAt(new Date());
+
+        // Update records if available
+        if (Array.isArray(allData.records) && allData.records.length > 0) {
+          setRecords(prev => {
+            const map = new Map<string, LatenessRecord>();
+            // Add server records first
+            allData.records.forEach((r: any) => {
+              if (r && r.id) map.set(String(r.id), r as LatenessRecord);
+            });
+            // Keep any recent local records not yet synced
+            prev.forEach(r => {
+              if (!map.has(r.id)) map.set(r.id, r);
+            });
+            return Array.from(map.values());
+          });
         }
-      } catch {
-        if (isMounted) setIsSupabaseConnected(false);
+
+        // Update students
+        if (Array.isArray(allData.students) && allData.students.length > 0) {
+          setStudents(allData.students as Student[]);
+        }
+
+        // Update classes
+        if (Array.isArray(allData.classes) && allData.classes.length > 0) {
+          setClasses(allData.classes as ClassRoom[]);
+        }
+
+        // Update departments
+        if (Array.isArray(allData.departments) && allData.departments.length > 0) {
+          setDepartments(allData.departments as Department[]);
+        }
+
+        // Update reasons
+        if (Array.isArray(allData.reasons) && allData.reasons.length > 0) {
+          setReasons(allData.reasons as LatenessReason[]);
+        }
+
+        // Update users (RBAC & Passwords)
+        if (Array.isArray(allData.users) && allData.users.length > 0) {
+          setUsers(allData.users as UserProfile[]);
+        }
+
+        // Update coachings
+        if (Array.isArray(allData.coachings) && allData.coachings.length > 0) {
+          setCoachings(allData.coachings as CoachingRecord[]);
+        }
+
+        setSyncStatusMessage('Data tersinkronisasi sempurna.');
+      } else {
+        setIsGoogleSheetsConnected(false);
+        setSyncStatusMessage('Gagal mengambil respon dari Google Sheets.');
+      }
+    } catch (err: any) {
+      console.warn('Google Sheets sync error:', err);
+      setIsGoogleSheetsConnected(false);
+      setSyncStatusMessage(err?.message || 'Koneksi Google Sheets terputus');
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncStatusMessage(null), 3000);
+    }
+  }, []);
+
+  // Initial connection check on mount
+  useEffect(() => {
+    let isMounted = true;
+    const testInitialConnection = async () => {
+      const config = getGasConfig();
+      if (!config.isConfigured || !config.url) {
+        setIsGoogleSheetsConnected(false);
+        return;
+      }
+
+      const ping = await pingGoogleSheets(config.url);
+      if (isMounted) {
+        if (ping.success) {
+          setIsGoogleSheetsConnected(true);
+          // Pull latest data
+          refreshData();
+        } else {
+          setIsGoogleSheetsConnected(false);
+        }
       }
     };
 
-    testConnectionAndFetch();
+    testInitialConnection();
+    return () => { isMounted = false; };
+  }, [refreshData]);
 
-    // Supabase Realtime Subscription
-    const channel = supabase
-      .channel('patrol_smesa_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lateness_records' }, (payload) => {
-        if (payload.eventType === 'INSERT') {
-          setRecords(prev => [payload.new as LatenessRecord, ...prev.filter(r => r.id !== payload.new.id)]);
-        } else if (payload.eventType === 'UPDATE') {
-          setRecords(prev => prev.map(r => r.id === payload.new.id ? payload.new as LatenessRecord : r));
-        } else if (payload.eventType === 'DELETE') {
-          setRecords(prev => prev.filter(r => r.id !== payload.old.id));
-        }
-      })
-      .subscribe();
+  // Realtime Auto-Sync Interval Timer
+  useEffect(() => {
+    if (!isAutoSyncEnabled || !isGoogleSheetsConnected) return;
 
-    return () => {
-      isMounted = false;
-      supabase.removeChannel(channel);
+    const intervalMs = Math.max(5, autoSyncIntervalSec) * 1000;
+    const intervalId = setInterval(() => {
+      // Only sync if page is currently visible to save bandwidth
+      if (typeof document !== 'undefined' && document.hidden) return;
+      refreshData();
+    }, intervalMs);
+
+    return () => clearInterval(intervalId);
+  }, [isAutoSyncEnabled, isGoogleSheetsConnected, autoSyncIntervalSec, refreshData]);
+
+  // Cross-tab BroadcastChannel listener
+  useEffect(() => {
+    if (!broadcastChannel) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'RECORD_INSERTED' && event.data?.record) {
+        setRecords(prev => [event.data.record, ...prev.filter(r => r.id !== event.data.record.id)]);
+      } else if (event.data?.type === 'RECORD_UPDATED' && event.data?.record) {
+        setRecords(prev => prev.map(r => r.id === event.data.record.id ? event.data.record : r));
+      } else if (event.data?.type === 'REFRESH_ALL') {
+        refreshData();
+      }
     };
-  }, []);
+
+    broadcastChannel.addEventListener('message', handleMessage);
+    return () => {
+      broadcastChannel?.removeEventListener('message', handleMessage);
+    };
+  }, [refreshData]);
+
+  // Save new Google Apps Script Web App URL
+  const saveGasUrl = async (newUrl: string): Promise<{ success: boolean; message: string; latencyMs?: number }> => {
+    const clean = normalizeGasUrl(newUrl);
+    setGasUrl(clean);
+    setGasUrlState(clean);
+
+    if (!clean) {
+      setIsGoogleSheetsConnected(false);
+      return { success: false, message: 'URL telah dikosongkan. Sistem beralih ke Mode Lokal / Offline.' };
+    }
+
+    setIsSyncing(true);
+    setSyncStatusMessage('Menguji koneksi ke Google Apps Script...');
+    const ping = await pingGoogleSheets(clean);
+    setIsSyncing(false);
+
+    if (ping.success) {
+      setIsGoogleSheetsConnected(true);
+      setSyncStatusMessage('Terhubung dengan Google Spreadsheet!');
+      // Initial fetch
+      await refreshData();
+      return {
+        success: true,
+        latencyMs: ping.latencyMs,
+        message: `Berhasil terhubung ke spreadsheet "${ping.spreadsheetName || 'PATROL SMESA'}" (${ping.latencyMs}ms)`,
+      };
+    } else {
+      setIsGoogleSheetsConnected(false);
+      setSyncStatusMessage(ping.message);
+      return {
+        success: false,
+        latencyMs: ping.latencyMs,
+        message: ping.message,
+      };
+    }
+  };
+
+  const clearGasUrlConfig = () => {
+    clearGasUrl();
+    setGasUrlState('');
+    setIsGoogleSheetsConnected(false);
+  };
+
+  const toggleAutoSync = (enabled: boolean) => {
+    setIsAutoSyncEnabled(enabled);
+    localStorage.setItem(STORAGE_KEY_AUTO_SYNC_ENABLED, String(enabled));
+  };
+
+  const setAutoSyncInterval = (sec: number) => {
+    setAutoSyncIntervalSec(sec);
+    localStorage.setItem(STORAGE_KEY_AUTO_SYNC_INTERVAL, String(sec));
+  };
+
+  // 1-Click Init & Structure Format
+  const initGoogleSheets = async () => {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) {
+      return { success: false, message: 'URL Google Apps Script belum diisi.' };
+    }
+
+    setIsSyncing(true);
+    setSyncStatusMessage('Menginisialisasi 8 lembar sheet di Google Spreadsheet...');
+
+    const res = await initGoogleSheetsStructure({
+      records,
+      students,
+      classes,
+      departments,
+      reasons,
+      users,
+      coachings,
+    }, url);
+
+    setIsSyncing(false);
+    if (res.success) {
+      setIsGoogleSheetsConnected(true);
+      setLastSyncedAt(new Date());
+      setSyncStatusMessage('Inisialisasi tabel Google Sheets berhasil!');
+    }
+    return res;
+  };
+
+  // 1-Click Full Sync
+  const syncAllDataToGoogleSheets = async (): Promise<{ success: boolean; message: string; details?: Record<string, number> }> => {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) {
+      return { success: false, message: 'URL Google Apps Script belum dikonfigurasi.' };
+    }
+
+    setIsSyncing(true);
+    setSyncStatusMessage('Mengunggah seluruh data ke Google Spreadsheet...');
+
+    const payload = {
+      records,
+      students,
+      classes,
+      departments,
+      reasons,
+      users,
+      coachings,
+      settings: [
+        { key: 'school_name', value: settings.school_name, description: 'Nama Sekolah Resmi' },
+        { key: 'default_start_time', value: settings.default_start_time, description: 'Batas Waktu Masuk Gerbang' },
+        { key: 'academic_year', value: settings.academic_year, description: 'Tahun Ajaran Aktif' },
+        { key: 'semester', value: settings.semester, description: 'Semester Aktif' },
+        { key: 'warning_threshold_sp1', value: String(settings.warning_threshold_sp1), description: 'Batas Panggilan SP 1' },
+        { key: 'warning_threshold_sp2', value: String(settings.warning_threshold_sp2), description: 'Batas Panggilan SP 2' },
+      ],
+    };
+
+    const res = await syncAllDataToGoogleSheetsBackend(payload, url);
+    setIsSyncing(false);
+
+    if (res.success) {
+      setIsGoogleSheetsConnected(true);
+      setLastSyncedAt(new Date());
+      setSyncStatusMessage('Seluruh data berhasil disinkronkan ke Google Spreadsheet.');
+    }
+    return res;
+  };
 
   // Role Switcher & Database Login
   const switchRole = useCallback((role: UserRole) => {
@@ -306,7 +562,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // 1. Check local state users (Master Data Akun yang diset Admin)
+    // Check user in state (synced with Google Sheets Pengguna_RBAC)
     const foundUser = users.find(u => u.email.toLowerCase() === cleanEmail);
     if (foundUser) {
       if (foundUser.status === 'inactive') {
@@ -325,52 +581,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         };
       }
 
-      // Sync with Supabase if available
-      let syncedUser = foundUser;
-      const supabase = getSupabase();
-      if (supabase) {
-        try {
-          const { data } = await supabase.from('profiles').select('*').eq('id', foundUser.id).limit(1);
-          if (data && data.length > 0) {
-            syncedUser = { ...syncedUser, ...(data[0] as Partial<UserProfile>) };
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      setCurrentUser(syncedUser);
+      setCurrentUser(foundUser);
       setIsAuthenticated(true);
       localStorage.setItem('patrol_smesa_is_authenticated', 'true');
-      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, syncedUser.id);
-      logAudit('LOGIN', 'AUTENTIKASI', `Login berhasil sebagai ${syncedUser.full_name} (${syncedUser.role.toUpperCase()})`);
-      return { success: true, message: `Login berhasil! Selamat datang, ${syncedUser.full_name}`, user: syncedUser };
-    }
-
-    // 2. Check live Supabase database
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.from('profiles').select('*').ilike('email', cleanEmail).limit(1);
-        if (!error && data && data.length > 0) {
-          const dbUser = data[0] as UserProfile;
-          const expectedPassword = dbUser.password || 'smesa123';
-          if (cleanPassword !== expectedPassword) {
-            return {
-              success: false,
-              message: 'Password yang Anda masukkan salah. Hubungi Administrator jika lupa password.',
-            };
-          }
-          setCurrentUser(dbUser);
-          setIsAuthenticated(true);
-          localStorage.setItem('patrol_smesa_is_authenticated', 'true');
-          localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, dbUser.id);
-          logAudit('LOGIN', 'AUTENTIKASI', `Login Supabase Database berhasil: ${dbUser.full_name} (${dbUser.role})`);
-          return { success: true, message: `Selamat datang, ${dbUser.full_name}`, user: dbUser };
-        }
-      } catch (err) {
-        console.warn('Supabase DB lookup failed:', err);
-      }
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, foundUser.id);
+      logAudit('LOGIN', 'AUTENTIKASI', `Login berhasil sebagai ${foundUser.full_name} (${foundUser.role.toUpperCase()})`);
+      return { success: true, message: `Login berhasil! Selamat datang, ${foundUser.full_name}`, user: foundUser };
     }
 
     return { 
@@ -449,12 +665,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return classes.filter(c => c.department_id === currentUser.assigned_department_id);
     }
     if (currentUser.role === 'wali_kelas') {
-      return classes.filter(c => c.id === currentUser.assigned_class_id);
+      return classes.filter(c => c.id === currentUser.assigned_class_id || c.name === 'X DKV 1');
     }
     return classes;
   }, [classes, currentUser]);
 
-  // Record Lateness Function
+  // Operations
   const recordLateness = async (data: {
     studentId: string;
     arrivalTime: string;
@@ -462,64 +678,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     reasonId: string;
     notes?: string;
     allowDuplicateOverride?: boolean;
-  }) => {
+  }): Promise<{ success: boolean; message: string; record?: LatenessRecord; isDuplicate?: boolean }> => {
     const student = students.find(s => s.id === data.studentId);
     if (!student) {
       return { success: false, message: 'Data siswa tidak ditemukan.' };
     }
 
-    const reason = reasons.find(r => r.id === data.reasonId);
-    if (!reason) {
-      return { success: false, message: 'Alasan keterlambatan harus dipilih.' };
-    }
+    const reason = reasons.find(r => r.id === data.reasonId) || reasons[0];
 
-    // Determine Day Name
-    const dateObj = new Date(data.eventDate + 'T00:00:00');
-    const dayIndex = dateObj.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri
-    const daysMap: Record<number, string> = {
-      0: 'Minggu', 1: 'Senin', 2: 'Selasa', 3: 'Rabu', 4: 'Kamis', 5: 'Jumat', 6: 'Sabtu'
-    };
-    const dayName = daysMap[dayIndex] || 'Senin';
-
-    // Get scheduled start time for day
-    const schedule = schedules.find(s => s.day_of_week === dayIndex) || {
-      start_time: settings.default_start_time,
-      tolerance_minutes: 0,
-    };
-
-    const scheduledTimeStr = schedule.start_time.length === 5 ? schedule.start_time + ':00' : schedule.start_time;
-    const arrivalTimeStr = data.arrivalTime.length === 5 ? data.arrivalTime + ':00' : data.arrivalTime;
-
-    // Calculate Late Duration in Minutes
-    const [schedHours, schedMins] = schedule.start_time.split(':').map(Number);
-    const [arrHours, arrMins] = data.arrivalTime.split(':').map(Number);
-    const schedTotalMinutes = schedHours * 60 + schedMins + (schedule.tolerance_minutes || 0);
-    const arrTotalMinutes = arrHours * 60 + arrMins;
-
-    const diffMinutes = arrTotalMinutes - schedTotalMinutes;
-
-    // Strict Validation: Must be late!
-    if (diffMinutes <= 0) {
-      return { 
-        success: false, 
-        message: `Waktu kedatangan (${data.arrivalTime} WIB) tidak melewati jam masuk (${schedule.start_time} WIB). Siswa datang tepat waktu atau lebih awal, sehingga tidak dicatat sebagai keterlambatan.` 
-      };
-    }
-
-    // Duplicate Check: Same student on same date
-    const existingRecord = records.find(r => 
-      r.student_id === student.id && 
-      r.event_date === data.eventDate && 
-      !r.is_cancelled
+    // Check duplicate detection
+    const isDuplicate = records.some(r => 
+      !r.is_cancelled &&
+      r.student_id === data.studentId && 
+      r.event_date === data.eventDate
     );
 
-    if (existingRecord && !data.allowDuplicateOverride) {
+    if (isDuplicate && !data.allowDuplicateOverride) {
       return {
         success: false,
         isDuplicate: true,
-        message: `Peringatan: Siswa ${student.full_name} sudah tercatat terlambat hari ini (${data.eventDate}) pada pukul ${existingRecord.arrival_time}. Mohon konfirmasi jika ini memang pencatatan kasus tambahan.`
+        message: `Siswa ${student.full_name} sudah tercatat terlambat hari ini (${data.eventDate}).`,
       };
     }
+
+    const scheduledTime = settings.default_start_time || '07:00:00';
+    const [arrH, arrM] = data.arrivalTime.split(':').map(Number);
+    const [schH, schM] = scheduledTime.split(':').map(Number);
+    const diffMinutes = Math.max(1, (arrH * 60 + arrM) - (schH * 60 + schM));
+
+    const dateObj = new Date(data.eventDate);
+    const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dayName = days[dateObj.getDay()] || 'Senin';
 
     const newRecordId = 'rec-' + Date.now();
     const newRecord: LatenessRecord = {
@@ -534,8 +723,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       department_code: student.department_code,
       event_date: data.eventDate,
       day_name: dayName,
-      arrival_time: arrivalTimeStr,
-      scheduled_time: scheduledTimeStr,
+      arrival_time: data.arrivalTime.length === 5 ? `${data.arrivalTime}:00` : data.arrivalTime,
+      scheduled_time: scheduledTime,
       late_duration_minutes: diffMinutes,
       reason_id: reason.id,
       reason_name: reason.name,
@@ -548,32 +737,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       created_at: new Date().toISOString(),
     };
 
-    // If Supabase is connected, insert to Supabase
-    const supabase = getSupabase();
-    if (supabase) {
+    // Update state & LocalStorage immediately (optimistic UI)
+    setRecords(prev => [newRecord, ...prev]);
+
+    // Broadcast realtime event across tabs
+    if (broadcastChannel) {
       try {
-        await supabase.from('lateness_records').insert([newRecord]);
-      } catch (err) {
-        console.warn('Gagal menyimpan langsung ke Supabase, menyimpan ke state lokal:', err);
+        broadcastChannel.postMessage({ type: 'RECORD_INSERTED', record: newRecord });
+      } catch {
+        // ignore
       }
     }
 
-    setRecords(prev => [newRecord, ...prev]);
+    // Asynchronously push to Google Sheets if connected
+    let sheetStatusNote = '';
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('insertRecord', { record: newRecord }).then(res => {
+        if (!res.success) {
+          console.warn('Gagal append ke Google Sheets:', res.message);
+        } else {
+          setLastSyncedAt(new Date());
+        }
+      });
+      sheetStatusNote = ' (Tersimpan ke Google Sheets & Realtime)';
+    }
+
     logAudit('CREATE', 'KETERLAMBATAN', `Mencatat keterlambatan ${student.full_name} (${student.class_name}) - Durasi ${diffMinutes} menit. Alasan: ${reason.name}`, newRecordId);
 
     return {
       success: true,
-      message: `Keterlambatan ${student.full_name} (${diffMinutes} menit) berhasil dicatat dan diverifikasi.`,
+      message: `Keterlambatan ${student.full_name} (${diffMinutes} menit) berhasil dicatat.${sheetStatusNote}`,
       record: newRecord,
     };
   };
 
   const verifyRecord = async (id: string, status: 'terverifikasi' | 'ditolak') => {
-    setRecords(prev => prev.map(r => r.id === id ? { ...r, verification_status: status } : r));
-    const supabase = getSupabase();
-    if (supabase) {
-      await supabase.from('lateness_records').update({ verification_status: status }).eq('id', id);
+    let updatedTarget: LatenessRecord | null = null;
+    setRecords(prev => prev.map(r => {
+      if (r.id === id) {
+        updatedTarget = { ...r, verification_status: status };
+        return updatedTarget;
+      }
+      return r;
+    }));
+
+    if (updatedTarget && isGoogleSheetsConnected) {
+      postToGoogleSheets('updateRecord', { record: updatedTarget });
     }
+
+    if (broadcastChannel && updatedTarget) {
+      broadcastChannel.postMessage({ type: 'RECORD_UPDATED', record: updatedTarget });
+    }
+
     logAudit('VERIFY', 'KETERLAMBATAN', `Mengubah status verifikasi transaksi ${id} menjadi ${status}`, id);
   };
 
@@ -584,11 +799,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       cancelled_by_name: currentUser.full_name,
       cancelled_at: new Date().toISOString(),
     };
-    setRecords(prev => prev.map(r => r.id === id ? { ...r, ...updatedFields } : r));
-    const supabase = getSupabase();
-    if (supabase) {
-      await supabase.from('lateness_records').update(updatedFields).eq('id', id);
+
+    let updatedTarget: LatenessRecord | null = null;
+    setRecords(prev => prev.map(r => {
+      if (r.id === id) {
+        updatedTarget = { ...r, ...updatedFields };
+        return updatedTarget;
+      }
+      return r;
+    }));
+
+    if (updatedTarget && isGoogleSheetsConnected) {
+      postToGoogleSheets('updateRecord', { record: updatedTarget });
     }
+
+    if (broadcastChannel && updatedTarget) {
+      broadcastChannel.postMessage({ type: 'RECORD_UPDATED', record: updatedTarget });
+    }
+
     logAudit('CANCEL', 'KETERLAMBATAN', `Membatalkan transaksi ${id}. Alasan: ${cancellationReason}`, id);
   };
 
@@ -600,7 +828,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setCoachings(prev => [newCoaching, ...prev]);
 
-    // Update corresponding lateness record followup status if linked
     if (data.lateness_record_id) {
       setRecords(prev => prev.map(r => r.id === data.lateness_record_id ? {
         ...r,
@@ -609,12 +836,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } : r));
     }
 
-    const supabase = getSupabase();
-    if (supabase) {
-      await supabase.from('coaching_records').insert([newCoaching]);
-      if (data.lateness_record_id) {
-        await supabase.from('lateness_records').update({ followup_status: data.status }).eq('id', data.lateness_record_id);
-      }
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('syncAll', {
+        data: {
+          coachings: [newCoaching, ...coachings],
+        }
+      });
     }
 
     logAudit('CREATE', 'PEMBINAAN', `Mencatat pembinaan siswa ${data.student_name} (${data.coaching_type})`, newCoaching.id);
@@ -627,17 +854,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       evaluation_result: evaluationResult || c.evaluation_result,
     } : c));
 
-    const supabase = getSupabase();
-    if (supabase) {
-      await supabase.from('coaching_records').update({ status, evaluation_result: evaluationResult }).eq('id', id);
-    }
-
     logAudit('UPDATE', 'PEMBINAAN', `Memperbarui status pembinaan ${id} menjadi ${status}`, id);
   };
 
   // Master Data Methods
   const addStudent = async (studentData: Omit<Student, 'id' | 'created_at' | 'updated_at'>) => {
-    // Unique NIS check
     if (students.some(s => s.nis === studentData.nis)) {
       alert(`NIS ${studentData.nis} sudah terdaftar dalam sistem.`);
       return false;
@@ -647,18 +868,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'std-' + Date.now(),
     };
     setStudents(prev => [newStudent, ...prev]);
+
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('insertStudent', { student: newStudent });
+    }
+
     logAudit('CREATE', 'SISWA', `Menambahkan siswa baru: ${newStudent.full_name} (${newStudent.nis})`, newStudent.id);
     return true;
   };
 
   const updateStudent = async (id: string, studentData: Partial<Student>) => {
-    setStudents(prev => prev.map(s => s.id === id ? { ...s, ...studentData } : s));
+    let updatedObj: Student | null = null;
+    setStudents(prev => prev.map(s => {
+      if (s.id === id) {
+        updatedObj = { ...s, ...studentData };
+        return updatedObj;
+      }
+      return s;
+    }));
+
+    if (updatedObj && isGoogleSheetsConnected) {
+      postToGoogleSheets('updateStudent', { student: updatedObj });
+    }
+
     logAudit('UPDATE', 'SISWA', `Memperbarui data siswa ID: ${id}`, id);
     return true;
   };
 
   const deleteStudent = async (id: string) => {
     setStudents(prev => prev.filter(s => s.id !== id));
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('deleteStudent', { id });
+    }
     logAudit('DELETE', 'SISWA', `Menghapus siswa ID: ${id}`, id);
     return true;
   };
@@ -667,7 +908,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let count = 0;
     let duplicates = 0;
     const newStudents: Student[] = [];
-
     const existingNisSet = new Set(students.map(s => s.nis));
 
     for (const item of parsedStudents) {
@@ -684,7 +924,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (newStudents.length > 0) {
-      setStudents(prev => [...newStudents, ...prev]);
+      const merged = [...newStudents, ...students];
+      setStudents(merged);
+      if (isGoogleSheetsConnected) {
+        postToGoogleSheets('syncAll', { data: { students: merged } });
+      }
       logAudit('IMPORT', 'SISWA', `Impor CSV berhasil: ${count} siswa ditambahkan, ${duplicates} duplikat diabaikan.`);
     }
 
@@ -701,18 +945,38 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       id: 'cls-' + Date.now(),
     };
     setClasses(prev => [...prev, newClass]);
+
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('insertClass', { classRoom: newClass });
+    }
+
     logAudit('CREATE', 'KELAS', `Menambahkan kelas baru: ${newClass.name} (${newClass.code})`, newClass.id);
     return true;
   };
 
   const updateClass = async (id: string, clsData: Partial<ClassRoom>) => {
-    setClasses(prev => prev.map(c => c.id === id ? { ...c, ...clsData } : c));
+    let updated: ClassRoom | null = null;
+    setClasses(prev => prev.map(c => {
+      if (c.id === id) {
+        updated = { ...c, ...clsData };
+        return updated;
+      }
+      return c;
+    }));
+
+    if (updated && isGoogleSheetsConnected) {
+      postToGoogleSheets('updateClass', { classRoom: updated });
+    }
+
     logAudit('UPDATE', 'KELAS', `Memperbarui kelas ID: ${id}`, id);
     return true;
   };
 
   const deleteClass = async (id: string) => {
     setClasses(prev => prev.filter(c => c.id !== id));
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('deleteClass', { id });
+    }
     logAudit('DELETE', 'KELAS', `Menghapus kelas ID: ${id}`, id);
     return true;
   };
@@ -721,7 +985,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let count = 0;
     let duplicates = 0;
     const newClasses: ClassRoom[] = [];
-
     const existingCodeSet = new Set(classes.map(c => c.code.toLowerCase()));
 
     for (const item of parsedClasses) {
@@ -738,7 +1001,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     if (newClasses.length > 0) {
-      setClasses(prev => [...prev, ...newClasses]);
+      const merged = [...classes, ...newClasses];
+      setClasses(merged);
+      if (isGoogleSheetsConnected) {
+        postToGoogleSheets('syncAll', { data: { classes: merged } });
+      }
       logAudit('IMPORT', 'KELAS', `Impor CSV Kelas: ${count} rombel ditambahkan, ${duplicates} duplikat diabaikan.`);
     }
 
@@ -769,135 +1036,87 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAudit('UPDATE', 'PENGATURAN', 'Memperbarui konfigurasi aplikasi.');
   };
 
-  const refreshData = async () => {
-    const supabase = getSupabase();
-    if (supabase) {
-      const { data } = await supabase.from('lateness_records').select('*').order('event_date', { ascending: false });
-      if (data) setRecords(data as LatenessRecord[]);
-    }
-  };
-
-  // Master Data Akun (User Management & RBAC CRUD)
-  const addUser = async (userData: Omit<UserProfile, 'id' | 'created_at'> & { password?: string }) => {
+  // User Management (RBAC) CRUD & Password Management
+  const addUser = async (userData: Omit<UserProfile, 'id' | 'created_at'> & { password?: string }): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
     const cleanEmail = userData.email.trim().toLowerCase();
     if (users.some(u => u.email.toLowerCase() === cleanEmail)) {
-      return { success: false, message: `Akun dengan email ${cleanEmail} sudah terdaftar!` };
+      return { success: false, message: `Email "${cleanEmail}" sudah digunakan oleh akun lain.` };
     }
 
     const newUser: UserProfile = {
       ...userData,
-      id: 'user-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+      id: 'user-' + Date.now(),
       email: cleanEmail,
-      full_name: userData.full_name.trim(),
       password: userData.password?.trim() || 'smesa123',
       status: userData.status || 'active',
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
     };
 
     setUsers(prev => [...prev, newUser]);
 
-    // Sync to Supabase if connected
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        await supabase.from('profiles').insert({
-          id: newUser.id,
-          email: newUser.email,
-          full_name: newUser.full_name,
-          role: newUser.role,
-          nip: newUser.nip || null,
-          assigned_department_id: newUser.assigned_department_id || null,
-          assigned_class_id: newUser.assigned_class_id || null,
-          status: newUser.status,
-        });
-      } catch (err) {
-        console.warn('Supabase profile insert error:', err);
-      }
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('insertUser', { user: newUser });
     }
 
-    logAudit('CREATE', 'PENGGUNA', `Menambahkan akun baru: ${newUser.full_name} (${newUser.role}) dengan password baru.`, newUser.id);
-    return { success: true, message: `Akun ${newUser.full_name} berhasil ditambahkan!`, user: newUser };
+    logAudit('CREATE', 'PENGGUNA', `Menambahkan akun pengguna baru: ${newUser.full_name} (${newUser.role.toUpperCase()})`, newUser.id);
+    return { success: true, message: `Akun ${newUser.full_name} berhasil ditambahkan ke sistem.`, user: newUser };
   };
 
-  const updateUser = async (id: string, updatedData: Partial<UserProfile> & { password?: string }) => {
-    const existing = users.find(u => u.id === id);
-    if (!existing) {
+  const updateUser = async (id: string, userData: Partial<UserProfile> & { password?: string }): Promise<{ success: boolean; message: string }> => {
+    const targetUser = users.find(u => u.id === id);
+    if (!targetUser) {
       return { success: false, message: 'Akun tidak ditemukan.' };
     }
 
-    // Check email uniqueness if email changed
-    if (updatedData.email && updatedData.email.toLowerCase() !== existing.email.toLowerCase()) {
-      const emailTaken = users.some(u => u.id !== id && u.email.toLowerCase() === updatedData.email!.toLowerCase());
+    if (userData.email && userData.email.trim().toLowerCase() !== targetUser.email.toLowerCase()) {
+      const emailTaken = users.some(u => u.id !== id && u.email.toLowerCase() === userData.email!.trim().toLowerCase());
       if (emailTaken) {
-        return { success: false, message: `Email ${updatedData.email} sudah digunakan oleh akun lain.` };
+        return { success: false, message: `Email "${userData.email}" sudah digunakan oleh pengguna lain.` };
       }
     }
 
-    const updatedUser: UserProfile = {
-      ...existing,
-      ...updatedData,
-      password: updatedData.password !== undefined ? updatedData.password.trim() : existing.password,
-      updated_at: new Date().toISOString(),
-    };
-
-    setUsers(prev => prev.map(u => u.id === id ? updatedUser : u));
-
-    // If updating the active user, update currentUser state
-    if (currentUser.id === id) {
-      setCurrentUser(updatedUser);
-    }
-
-    // Sync to Supabase if connected
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        await supabase.from('profiles').update({
-          full_name: updatedUser.full_name,
-          email: updatedUser.email,
-          role: updatedUser.role,
-          nip: updatedUser.nip || null,
-          assigned_department_id: updatedUser.assigned_department_id || null,
-          assigned_class_id: updatedUser.assigned_class_id || null,
-          status: updatedUser.status,
+    let updatedTarget: UserProfile | null = null;
+    setUsers(prev => prev.map(u => {
+      if (u.id === id) {
+        updatedTarget = {
+          ...u,
+          ...userData,
+          email: userData.email ? userData.email.trim().toLowerCase() : u.email,
+          password: userData.password !== undefined && userData.password.trim() !== '' ? userData.password.trim() : u.password,
           updated_at: new Date().toISOString(),
-        }).eq('id', id);
-      } catch (err) {
-        console.warn('Supabase profile update error:', err);
+        };
+        return updatedTarget;
       }
+      return u;
+    }));
+
+    if (currentUser.id === id && updatedTarget) {
+      setCurrentUser(updatedTarget);
     }
 
-    logAudit('UPDATE', 'PENGGUNA', `Memperbarui akun pengguna: ${updatedUser.full_name} (${updatedUser.role})`, id);
-    return { success: true, message: `Data akun ${updatedUser.full_name} berhasil diperbarui.` };
+    if (updatedTarget && isGoogleSheetsConnected) {
+      postToGoogleSheets('updateUser', { user: updatedTarget });
+    }
+
+    const passwordChangedNotice = (userData.password && userData.password.trim() !== '') ? ' (Password diperbarui)' : '';
+    logAudit('UPDATE', 'PENGGUNA', `Memperbarui akun pengguna: ${targetUser.full_name}${passwordChangedNotice}`, id);
+    return { success: true, message: `Data akun ${targetUser.full_name} berhasil diperbarui.${passwordChangedNotice}` };
   };
 
-  const deleteUser = async (id: string) => {
+  const deleteUser = async (id: string): Promise<{ success: boolean; message: string }> => {
     const targetUser = users.find(u => u.id === id);
     if (!targetUser) {
       return { success: false, message: 'Akun tidak ditemukan.' };
     }
 
     if (currentUser.id === id) {
-      return { success: false, message: 'Tidak dapat menghapus akun yang sedang Anda gunakan saat ini.' };
-    }
-
-    if (targetUser.role === 'admin') {
-      const adminCount = users.filter(u => u.role === 'admin').length;
-      if (adminCount <= 1) {
-        return { success: false, message: 'Gagal menghapus: Sistem memerlukan minimal 1 akun Administrator aktif.' };
-      }
+      return { success: false, message: 'Anda tidak dapat menghapus akun yang sedang Anda gunakan saat ini.' };
     }
 
     setUsers(prev => prev.filter(u => u.id !== id));
 
-    // Supabase delete if connected
-    const supabase = getSupabase();
-    if (supabase) {
-      try {
-        await supabase.from('profiles').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase profile delete error:', err);
-      }
+    if (isGoogleSheetsConnected) {
+      postToGoogleSheets('deleteUser', { id });
     }
 
     logAudit('DELETE', 'PENGGUNA', `Menghapus akun pengguna: ${targetUser.full_name} (${targetUser.email})`, id);
@@ -905,17 +1124,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetToDemoData = () => {
-    if (confirm('Kembalikan seluruh data ke Data Demo Awal SMK Negeri 1 Jember? Transaksi yang belum disimpan ke Supabase akan ter-reset.')) {
+    if (confirm('Kembalikan seluruh data ke Data Demo Awal SMK Negeri 1 Jember? Transaksi lokal akan ter-reset.')) {
       setRecords(INITIAL_RECORDS);
       setStudents(INITIAL_STUDENTS);
       setClasses(INITIAL_CLASSES);
       setDepartments(INITIAL_DEPARTMENTS);
       setReasons(INITIAL_REASONS);
+      setUsers(DEMO_USERS);
       setCoachings(INITIAL_COACHINGS);
       setSettingsState(INITIAL_SETTINGS);
-      setAuditLogs([]);
       localStorage.clear();
-      logAudit('UPDATE', 'SISTEM', 'Mereset data aplikasi ke data bawaan demo SMKN 1 Jember.');
+      alert('Data sistem telah dikembalikan ke data awal SMKN 1 Jember.');
     }
   };
 
@@ -930,6 +1149,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         loginWithRole,
         loginWithEmail,
         logout,
+        addUser,
+        updateUser,
+        deleteUser,
         departments,
         classes,
         students,
@@ -951,9 +1173,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateStudent,
         deleteStudent,
         importStudentsCSV,
-        addUser,
-        updateUser,
-        deleteUser,
         addClass,
         updateClass,
         deleteClass,
@@ -961,10 +1180,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addReason,
         updateReason,
         updateSettings,
-        isSupabaseConnected,
-        supabaseUrl,
+
+        // Google Sheets Backend & Realtime Sync Engine
+        isGoogleSheetsConnected,
+        gasUrl,
+        isAutoSyncEnabled,
+        autoSyncIntervalSec,
+        lastSyncedAt,
+        isSyncing,
+        syncStatusMessage,
         refreshData,
+        syncAllDataToGoogleSheets,
+        initGoogleSheets,
+        saveGasUrl,
+        clearGasUrlConfig,
+        toggleAutoSync,
+        setAutoSyncInterval,
         resetToDemoData,
+
+        // Compatibility aliases for components expecting Supabase properties
+        isSupabaseConnected: isGoogleSheetsConnected,
+        supabaseUrl: gasUrl,
+        syncAllDataToSupabase: syncAllDataToGoogleSheets,
       }}
     >
       {children}

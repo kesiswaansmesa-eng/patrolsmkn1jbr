@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole, UserProfile } from '../../types';
-import { getSupabase, getSupabaseConfig } from '../../lib/supabaseClient';
+import { pingGoogleSheets, getGasConfig } from '../../lib/googleSheetsClient';
 
 interface LoginViewProps {
   onSuccessLogin?: () => void;
@@ -31,23 +31,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccessLogin }) => {
 
   const testDbConnection = async () => {
     setDbPingStatus('testing');
-    const start = performance.now();
-    try {
-      const supabase = getSupabase();
-      if (!supabase) {
-        setDbPingStatus('offline');
-        return;
-      }
-      const { error } = await supabase.from('profiles').select('id').limit(1);
-      const elapsed = Math.round(performance.now() - start);
-      if (!error) {
-        setDbPingStatus('connected');
-        setDbLatency(elapsed);
-      } else {
-        setDbPingStatus('connected');
-        setDbLatency(elapsed);
-      }
-    } catch {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) {
+      setDbPingStatus('offline');
+      return;
+    }
+    const res = await pingGoogleSheets(url);
+    if (res.success) {
+      setDbPingStatus('connected');
+      setDbLatency(res.latencyMs || null);
+    } else {
       setDbPingStatus('offline');
     }
   };
@@ -80,8 +73,8 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccessLogin }) => {
       borderHover: 'hover:border-purple-500 hover:shadow-purple-500/10',
       buttonColor: 'bg-purple-700 hover:bg-purple-800 focus:ring-purple-400',
       icon: ShieldCheck,
-      description: 'Manajemen pengguna & hak akses (RBAC), set password akun, sinkronisasi Supabase, impor/ekspor data rombel & audit log.',
-      keyTasks: ['Master Data Akun & Password', 'Konfigurasi Supabase Database', 'Audit Trail Aktivitas'],
+      description: 'Manajemen pengguna & hak akses (RBAC), set password akun, sinkronisasi Google Sheets & Apps Script, impor/ekspor data rombel & audit log.',
+      keyTasks: ['Master Data Akun & Password', 'Konfigurasi Google Sheets & Apps Script', 'Audit Trail Aktivitas'],
     },
     {
       role: 'petugas_piket',
@@ -255,9 +248,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccessLogin }) => {
           {/* Realtime Database Connection Bar */}
           <div className="inline-flex flex-wrap items-center justify-center gap-2.5 px-4 py-1.5 rounded-full bg-slate-900/90 border border-slate-700/80 text-xs shadow-inner">
             <div className="flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-slate-400 font-medium">Supabase Database:</span>
-              <span className="font-mono font-bold text-white">Patrolsmkn1jbr</span>
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-slate-400 font-medium">Backend:</span>
+              <span className="font-mono font-bold text-white">Google Sheets & Apps Script</span>
             </div>
             <span className="text-slate-600">•</span>
             <div className="flex items-center gap-1.5">
