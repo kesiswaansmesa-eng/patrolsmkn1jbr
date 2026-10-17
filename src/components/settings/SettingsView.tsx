@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GOOGLE_APPS_SCRIPT_CODE, TABLES_MENU_STRUCTURE } from '../../lib/googleAppsScriptCode';
-import { pingGoogleSheets } from '../../lib/googleSheetsClient';
+import { pingGoogleSheets, OFFICIAL_SMESA_GAS_URL } from '../../lib/googleSheetsClient';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -16,7 +16,8 @@ export const SettingsView: React.FC = () => {
     syncAllDataToGoogleSheets, initGoogleSheets, refreshData,
     isSyncing, lastSyncedAt, isAutoSyncEnabled, toggleAutoSync,
     autoSyncIntervalSec, setAutoSyncInterval,
-    records, students, classes, departments, reasons, users, coachings
+    records, students, classes, departments, reasons, users, coachings,
+    officialGasUrl, resetToOfficialUrl
   } = useApp();
 
   // Active Tab
@@ -91,6 +92,21 @@ export const SettingsView: React.FC = () => {
       setTestResult(null);
       alert('Koneksi Google Sheets dinonaktifkan.');
     }
+  };
+
+  const handleResetToOfficial = async () => {
+    setUrlInput(OFFICIAL_SMESA_GAS_URL);
+    setIsTesting(true);
+    setTestResult(null);
+    const res = await resetToOfficialUrl();
+    setIsTesting(false);
+    setTestResult({
+      tested: true,
+      success: res.success,
+      latencyMs: res.latencyMs,
+      message: res.message,
+    });
+    alert(`URL Resmi SMKN 1 Jember telah diaktifkan kembali!\n${res.message}`);
   };
 
   const handleInitSheets = async () => {
@@ -299,9 +315,28 @@ export const SettingsView: React.FC = () => {
 
             <form onSubmit={handleSaveGasUrl} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Web App URL Google Apps Script:
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Web App URL Google Apps Script:
+                  </label>
+                  {urlInput.trim() === OFFICIAL_SMESA_GAS_URL ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      URL Resmi Tersemat (Otomatis Aktif di Semua Perangkat)
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleResetToOfficial}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-0.5 rounded-full border border-blue-200 transition-colors cursor-pointer"
+                      title="Kembalikan ke URL resmi Google Apps Script SMKN 1 Jember"
+                    >
+                      <RotateCcw className="w-3 h-3 text-blue-600" />
+                      Gunakan URL Resmi SMESA
+                    </button>
+                  )}
+                </div>
+
                 <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="url"
@@ -330,10 +365,19 @@ export const SettingsView: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1">
-                  <Info className="w-3 h-3 text-blue-500" />
-                  Pastikan saat Deploy di Apps Script: <span className="font-semibold text-slate-600">Execute as: Me</span> dan <span className="font-semibold text-slate-600">Who has access: Anyone</span>.
-                </p>
+
+                {/* Auto Connect Info Banner */}
+                <div className="mt-2.5 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/80 text-[11px] text-slate-700 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-semibold text-emerald-900">
+                      Tersambung Otomatis di Seluruh Perangkat (Komputer Kios, Gerbang, Laptop Guru & Smartphone):
+                    </p>
+                    <p className="text-slate-600 leading-relaxed">
+                      URL Web App resmi SMKN 1 Jember (<code className="bg-white px-1.5 py-0.5 rounded border border-emerald-200 font-mono text-[10px] text-emerald-800 font-bold">AKfycbyAz2uD...DXOU/exec</code>) telah ditanamkan ke dalam inti aplikasi. Saat petugas membuka aplikasi di browser mana pun tanpa konfigurasi awal, aplikasi langsung terhubung ke Google Spreadsheet dan siap mencatat presensi secara realtime.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Test Response Box */}

@@ -8,8 +8,9 @@ export const STORAGE_KEY_GAS_URL = 'patrol_smesa_gas_url';
 export const STORAGE_KEY_AUTO_SYNC_ENABLED = 'patrol_smesa_auto_sync_enabled';
 export const STORAGE_KEY_AUTO_SYNC_INTERVAL = 'patrol_smesa_auto_sync_interval';
 
-// URL Default atau contoh jika belum diisi (bisa dikustomisasi oleh Admin)
-export const DEFAULT_GAS_URL = '';
+// URL Resmi Tersemat PATROL SMESA - Google Apps Script Web App (SMK NEGERI 1 JEMBER)
+export const OFFICIAL_SMESA_GAS_URL = 'https://script.google.com/macros/s/AKfycbyAz2uD_7mFmXcQS76_2i_6oC632FqLt0RI6cndSzHJjdDN8TU_9TbJcqjWdI9eDXOU/exec';
+export const DEFAULT_GAS_URL = OFFICIAL_SMESA_GAS_URL;
 
 /**
  * Normalisasi URL Apps Script Web App
@@ -27,17 +28,21 @@ export const normalizeGasUrl = (rawUrl: string): string => {
 
 /**
  * Mengambil URL Google Apps Script yang tersimpan
+ * Otomatis fallback ke URL Resmi SMESA jika perangkat belum diset manual
  */
 export const getGasConfig = () => {
   let url = '';
   if (typeof window !== 'undefined') {
-    url = localStorage.getItem(STORAGE_KEY_GAS_URL) || '';
+    const saved = localStorage.getItem(STORAGE_KEY_GAS_URL);
+    if (saved && saved.trim() && saved.startsWith('https://script.google.com/macros/s/')) {
+      url = saved.trim();
+    }
   }
   if (!url && typeof import.meta !== 'undefined' && import.meta.env?.VITE_GAS_URL) {
     url = import.meta.env.VITE_GAS_URL;
   }
   if (!url) {
-    url = DEFAULT_GAS_URL;
+    url = OFFICIAL_SMESA_GAS_URL;
   }
   
   const normalized = normalizeGasUrl(url);
@@ -47,7 +52,11 @@ export const getGasConfig = () => {
     normalized.includes('/exec')
   );
 
-  return { url: normalized, isConfigured };
+  return { 
+    url: normalized, 
+    isConfigured,
+    isOfficial: normalized === OFFICIAL_SMESA_GAS_URL
+  };
 };
 
 /**
@@ -61,12 +70,22 @@ export const setGasUrl = (url: string) => {
 };
 
 /**
- * Menghapus URL Google Apps Script dari localStorage
+ * Menghapus URL kustom dan mereset ke URL Resmi PATROL SMESA
  */
 export const clearGasUrl = () => {
   if (typeof window !== 'undefined') {
     localStorage.removeItem(STORAGE_KEY_GAS_URL);
   }
+};
+
+/**
+ * Mereset ke URL Resmi Tersemat SMKN 1 Jember
+ */
+export const resetToOfficialGasUrl = () => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(STORAGE_KEY_GAS_URL, OFFICIAL_SMESA_GAS_URL);
+  }
+  return OFFICIAL_SMESA_GAS_URL;
 };
 
 /**

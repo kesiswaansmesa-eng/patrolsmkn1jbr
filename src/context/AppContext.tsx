@@ -13,7 +13,8 @@ import {
   getGasConfig, setGasUrl, clearGasUrl, pingGoogleSheets, 
   fetchAllFromGoogleSheets, postToGoogleSheets, initGoogleSheetsStructure, 
   syncAllDataToGoogleSheetsBackend, STORAGE_KEY_AUTO_SYNC_ENABLED, 
-  STORAGE_KEY_AUTO_SYNC_INTERVAL, normalizeGasUrl
+  STORAGE_KEY_AUTO_SYNC_INTERVAL, normalizeGasUrl, OFFICIAL_SMESA_GAS_URL,
+  resetToOfficialGasUrl
 } from '../lib/googleSheetsClient';
 
 interface AppContextType {
@@ -93,6 +94,8 @@ interface AppContextType {
   initGoogleSheets: () => Promise<{ success: boolean; message: string; details?: any }>;
   saveGasUrl: (url: string) => Promise<{ success: boolean; message: string; latencyMs?: number }>;
   clearGasUrlConfig: () => void;
+  officialGasUrl: string;
+  resetToOfficialUrl: () => Promise<{ success: boolean; message: string; latencyMs?: number }>;
   toggleAutoSync: (enabled: boolean) => void;
   setAutoSyncInterval: (sec: number) => void;
   resetToDemoData: () => void;
@@ -454,6 +457,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     clearGasUrl();
     setGasUrlState('');
     setIsGoogleSheetsConnected(false);
+  };
+
+  const resetToOfficialUrl = async (): Promise<{ success: boolean; message: string; latencyMs?: number }> => {
+    resetToOfficialGasUrl();
+    setGasUrlState(OFFICIAL_SMESA_GAS_URL);
+    return await saveGasUrl(OFFICIAL_SMESA_GAS_URL);
   };
 
   const toggleAutoSync = (enabled: boolean) => {
@@ -1194,6 +1203,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         initGoogleSheets,
         saveGasUrl,
         clearGasUrlConfig,
+        officialGasUrl: OFFICIAL_SMESA_GAS_URL,
+        resetToOfficialUrl,
         toggleAutoSync,
         setAutoSyncInterval,
         resetToDemoData,
