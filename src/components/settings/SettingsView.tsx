@@ -3,11 +3,13 @@ import {
   Settings, Database, CheckCircle, Copy, 
   ExternalLink, RotateCcw, Save, ShieldAlert, Code2, AlertCircle, RefreshCw, 
   Sparkles, UploadCloud, Info, CheckCircle2, ChevronRight, HelpCircle, Layers,
-  FileSpreadsheet, Zap, Clock, Table, Check, ArrowRight, GraduationCap, UserCheck, Award
+  FileSpreadsheet, Zap, Clock, Table, Check, ArrowRight, GraduationCap, UserCheck, Award,
+  Calendar, Globe
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GOOGLE_APPS_SCRIPT_CODE, TABLES_MENU_STRUCTURE } from '../../lib/googleAppsScriptCode';
 import { pingGoogleSheets, OFFICIAL_SMESA_GAS_URL } from '../../lib/googleSheetsClient';
+import { formatIndonesianDate, getWIBTodayString, getWIBCurrentTime } from '../../utils/dateUtils';
 
 export const SettingsView: React.FC = () => {
   const { 
@@ -32,6 +34,10 @@ export const SettingsView: React.FC = () => {
     latencyMs?: number;
     message: string;
     sheetName?: string;
+    timezone?: string;
+    scriptTimezone?: string;
+    serverTimeWIB?: string;
+    isTimezoneSynced?: boolean;
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
@@ -95,6 +101,10 @@ export const SettingsView: React.FC = () => {
       latencyMs: res.latencyMs,
       message: res.message,
       sheetName: res.spreadsheetName,
+      timezone: res.timezone,
+      scriptTimezone: res.scriptTimezone,
+      serverTimeWIB: res.serverTimeWIB,
+      isTimezoneSynced: res.isTimezoneSynced,
     });
   };
 
@@ -126,12 +136,18 @@ export const SettingsView: React.FC = () => {
     setIsTesting(true);
     setTestResult(null);
     const res = await resetToOfficialUrl();
+    const ping = await pingGoogleSheets(OFFICIAL_SMESA_GAS_URL);
     setIsTesting(false);
     setTestResult({
       tested: true,
       success: res.success,
-      latencyMs: res.latencyMs,
+      latencyMs: ping.latencyMs || res.latencyMs,
       message: res.message,
+      sheetName: ping.spreadsheetName,
+      timezone: ping.timezone,
+      scriptTimezone: ping.scriptTimezone,
+      serverTimeWIB: ping.serverTimeWIB,
+      isTimezoneSynced: ping.isTimezoneSynced,
     });
     alert(`URL Resmi SMKN 1 Jember telah diaktifkan kembali!\n${res.message}`);
   };
@@ -425,7 +441,7 @@ export const SettingsView: React.FC = () => {
 
               {/* Test Response Box */}
               {testResult && (
-                <div className={`p-4 rounded-xl border text-xs ${
+                <div className={`p-4 rounded-xl border text-xs space-y-2 ${
                   testResult.success 
                     ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' 
                     : 'bg-rose-50/80 border-rose-200 text-rose-900'
@@ -442,9 +458,27 @@ export const SettingsView: React.FC = () => {
                     )}
                   </div>
                   {testResult.sheetName && (
-                    <p className="text-[11px] text-emerald-700 mt-1">
+                    <p className="text-[11px] text-emerald-700">
                       Nama Dokumen Spreadsheet: <strong>{testResult.sheetName}</strong>
                     </p>
+                  )}
+                  {testResult.success && testResult.timezone && (
+                    <div className="pt-2 border-t border-emerald-200/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Zona Waktu Spreadsheet:</span>
+                        <span className={`px-2 py-0.5 rounded font-mono font-bold ${
+                          testResult.isTimezoneSynced ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                        }`}>
+                          {testResult.timezone} {testResult.isTimezoneSynced ? '(Sesuai WIB)' : '(Perlu Disesuaikan ke Asia/Jakarta)'}
+                        </span>
+                      </div>
+                      {testResult.serverTimeWIB && (
+                        <div className="text-slate-600">
+                          Waktu Server: <strong className="text-emerald-900 font-mono">{testResult.serverTimeWIB} WIB</strong>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -814,6 +848,59 @@ export const SettingsView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Step 8: Penyesuaian Waktu & Zona Waktu Apps Script */}
+              <div className="flex gap-4 p-4 rounded-xl bg-blue-50 border border-blue-300">
+                <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-sm flex items-center justify-center flex-shrink-0">
+                  8
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    <span>Tahapan Mengatur Waktu Apps Script Agar Sesuai Waktu Aplikasi (WIB - GMT+07:00)</span>
+                  </h3>
+                  <p className="text-xs text-blue-900 leading-relaxed">
+                    Secara default, Google Spreadsheet atau Google Apps Script baru dapat berada di zona waktu Amerika/UTC sehingga tanggal atau jam bisa bergeser 7–14 jam jika tidak disesuaikan. Ikuti 3 langkah mudah berikut:
+                  </p>
+                  
+                  <div className="space-y-2 pt-1">
+                    <div className="p-3 bg-white rounded-lg border border-blue-200 text-xs text-slate-800 space-y-1">
+                      <p className="font-bold text-blue-900 flex items-center gap-1">
+                        <span>A. Atur Zona Waktu di Google Spreadsheet:</span>
+                      </p>
+                      <p className="text-slate-600 leading-relaxed">
+                        1. Di dokumen Google Spreadsheet Anda, klik menu <strong>File</strong> &rarr; pilih <strong>Setelan spreadsheet</strong> (Settings).<br />
+                        2. Pada tab <strong>Umum</strong>, cari opsi <strong>Zona waktu (Time zone)</strong>.<br />
+                        3. Ubah ke <strong>(GMT+07:00) Jakarta</strong>.<br />
+                        4. Klik tombol hijau <strong>Simpan setelan</strong> (Save settings).
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-lg border border-blue-200 text-xs text-slate-800 space-y-1">
+                      <p className="font-bold text-blue-900 flex items-center gap-1">
+                        <span>B. Atur Zona Waktu di Google Apps Script (appsscript.json):</span>
+                      </p>
+                      <p className="text-slate-600 leading-relaxed">
+                        1. Di tab editor Apps Script, klik ikon <strong>Gerigi (Setelan Proyek / Project Settings)</strong> di menu sebelah kiri.<br />
+                        2. Centang kotak <strong>"Tampilkan file manifes 'appsscript.json' di editor"</strong>.<br />
+                        3. Kembali ke tab <strong>Editor (&lt; &gt;)</strong> di sebelah kiri, klik file <strong>appsscript.json</strong>.<br />
+                        4. Pastikan baris timeZone bernilai: <code className="bg-slate-100 text-blue-800 font-mono font-bold px-1 rounded">"timeZone": "Asia/Jakarta"</code>.<br />
+                        5. Simpan file (<kbd className="bg-slate-100 px-1 rounded font-mono text-[10px]">Ctrl+S</kbd>).
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-lg border border-blue-200 text-xs text-slate-800 space-y-1">
+                      <p className="font-bold text-blue-900 flex items-center gap-1">
+                        <span>C. Terapkan (Deploy) Versi Baru:</span>
+                      </p>
+                      <p className="text-slate-600 leading-relaxed">
+                        Klik tombol biru <strong>Terapkan (Deploy)</strong> &rarr; <strong>Kelola penerapan (Manage deployments)</strong> &rarr; klik ikon <strong>Pensil (Edit)</strong> &rarr; pada dropdown <strong>Versi</strong> pilih <strong>Versi baru (New version)</strong> &rarr; klik <strong>Terapkan (Deploy)</strong>.<br />
+                        <em>*Selesai! Kini waktu kedatangan dan tanggal otomatis tersimpan presisi sesuai waktu WIB aplikasi PATROL SMESA.</em>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
@@ -1118,6 +1205,53 @@ export const SettingsView: React.FC = () => {
                   />
                   <span className="text-[10px] text-slate-500">Penerbitan surat pemanggilan orang tua ke sekolah.</span>
                 </div>
+              </div>
+            </div>
+
+            {/* CARD 3: ZONA WAKTU, TANGGAL & PENANGGALAN SISTEM OTOMATIS */}
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-emerald-600" />
+                  Zona Waktu, Tanggal & Jam Sistem Otomatis (Asia/Jakarta - WIB)
+                </h2>
+                <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-[11px] font-semibold flex items-center gap-1.5 self-start sm:self-auto">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Otomatis Tersimpan ke Database</span>
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 font-medium block">Zona Waktu Resmi Aplikasi:</span>
+                  <span className="text-sm font-black text-slate-900 font-mono mt-0.5 block">
+                    Asia/Jakarta (WIB)
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-1 block">GMT+07:00 Waktu Indonesia Barat</span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 font-medium block">Tanggal Kalender Hari Ini:</span>
+                  <span className="text-sm font-black text-blue-900 mt-0.5 block">
+                    {formatIndonesianDate(getWIBTodayString())}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500 mt-1 block">ISO: {getWIBTodayString()}</span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+                  <span className="text-[11px] text-slate-500 font-medium block">Jam Operasional Live:</span>
+                  <span className="text-sm font-black text-emerald-700 font-mono mt-0.5 block">
+                    {getWIBCurrentTime()} WIB
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-1 block">Sinkron dengan Jam Masuk Gerbang</span>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200 text-xs text-blue-950 flex items-start gap-2.5">
+                <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                <p className="leading-relaxed text-[11px]">
+                  <strong>Penanggalan Otomatis:</strong> Setiap transaksi keterlambatan siswa di gerbang pagi langsung mencatat tanggal hari ini secara otomatis tanpa perlu diubah manual. Jika petugas piket perlu merekam tanggal kemarin atau tanggal susulan, pilihan tanggal dapat diubah di menu <em>Catat Keterlambatan</em> dan sistem akan otomatis menyimpan tanggal tersebut ke dalam database Google Sheets secara presisi.
+                </p>
               </div>
             </div>
 

@@ -97,6 +97,10 @@ export interface PingResult {
   message: string;
   spreadsheetName?: string;
   spreadsheetId?: string;
+  timezone?: string;
+  scriptTimezone?: string;
+  serverTimeWIB?: string;
+  isTimezoneSynced?: boolean;
 }
 
 export const pingGoogleSheets = async (customUrl?: string): Promise<PingResult> => {
@@ -130,12 +134,18 @@ export const pingGoogleSheets = async (customUrl?: string): Promise<PingResult> 
 
     const data = await res.json();
     if (data.status === 'success') {
+      const tz = data.timezone || data.spreadsheetTimezone;
+      const isSynced = tz === 'Asia/Jakarta' || tz === 'GMT+7' || tz === 'GMT+07:00';
       return {
         success: true,
         latencyMs: elapsed,
         message: data.message || 'Terhubung dengan Google Spreadsheet',
         spreadsheetName: data.spreadsheetName,
         spreadsheetId: data.spreadsheetId,
+        timezone: tz,
+        scriptTimezone: data.scriptTimezone,
+        serverTimeWIB: data.serverTimeWIB,
+        isTimezoneSynced: isSynced,
       };
     } else {
       return {

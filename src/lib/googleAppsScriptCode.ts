@@ -87,12 +87,22 @@ function doGet(e) {
     var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : 'getAll';
     var ss = SpreadsheetApp.getActiveSpreadsheet();
 
+    // Pastikan Zona Waktu Google Spreadsheet otomatis sinkron ke Asia/Jakarta (WIB)
+    try {
+      if (ss.getSpreadsheetTimeZone() !== 'Asia/Jakarta') {
+        ss.setSpreadsheetTimeZone('Asia/Jakarta');
+      }
+    } catch (tzErr) {}
+
     if (action === 'ping') {
       return jsonResponse({
         status: 'success',
         message: 'Koneksi ke Google Apps Script & Spreadsheet SMKN 1 Jember BERHASIL!',
         spreadsheetName: ss.getName(),
         spreadsheetId: ss.getId(),
+        timezone: ss.getSpreadsheetTimeZone(),
+        scriptTimezone: Session.getScriptTimeZone(),
+        serverTimeWIB: Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss'),
         timestamp: new Date().toISOString()
       });
     }
@@ -153,6 +163,13 @@ function doPost(e) {
 
     var action = payload.action;
     var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Pastikan Zona Waktu Google Spreadsheet otomatis sinkron ke Asia/Jakarta (WIB)
+    try {
+      if (ss.getSpreadsheetTimeZone() !== 'Asia/Jakarta') {
+        ss.setSpreadsheetTimeZone('Asia/Jakarta');
+      }
+    } catch (tzErr) {}
 
     // 1. Inisialisasi Otomatis Semua Sheet & Format Tabel
     if (action === 'initSheets') {
@@ -324,9 +341,31 @@ function readSheetData(ss, sheetName) {
       if (cellVal !== '' && cellVal !== null && cellVal !== undefined) {
         hasContent = true;
       }
-      // Konversi format tanggal jika objek Date
+      // Konversi format tanggal jika objek Date atau string
       if (cellVal instanceof Date) {
-        rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss');
+        if (key === 'event_date') {
+          // Format YYYY-MM-DD khusus tanggal keterlambatan (WIB)
+          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'yyyy-MM-dd');
+        } else if (key === 'arrival_time' || key === 'scheduled_time') {
+          // Format HH:mm khusus waktu kedatangan / jam masuk
+          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'HH:mm');
+        } else {
+          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss');
+        }
+      } else if (typeof cellVal === 'string' && key === 'event_date') {
+        var mIso = cellVal.match(/^(\d{4}-\d{2}-\d{2})/);
+        if (mIso) {
+          rowObj[key] = mIso[1];
+        } else {
+          rowObj[key] = cellVal;
+        }
+      } else if (typeof cellVal === 'string' && (key === 'arrival_time' || key === 'scheduled_time')) {
+        var mTime = cellVal.match(/(\d{2}:\d{2})/);
+        if (mTime) {
+          rowObj[key] = mTime[1];
+        } else {
+          rowObj[key] = cellVal;
+        }
       } else {
         rowObj[key] = cellVal;
       }
@@ -429,6 +468,10 @@ function deleteRowById(sheet, headers, id) {
 }
 
 function initializeAllSheets(ss, seedData) {
+  try {
+    ss.setSpreadsheetTimeZone('Asia/Jakarta');
+  } catch (tzErr) {}
+
   var summary = {};
   for (var sKey in SHEETS) {
     var name = SHEETS[sKey];

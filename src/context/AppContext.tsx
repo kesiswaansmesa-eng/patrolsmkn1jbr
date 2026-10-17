@@ -16,6 +16,7 @@ import {
   STORAGE_KEY_AUTO_SYNC_INTERVAL, normalizeGasUrl, OFFICIAL_SMESA_GAS_URL,
   resetToOfficialGasUrl
 } from '../lib/googleSheetsClient';
+import { normalizeDateString } from '../utils/dateUtils';
 
 interface AppContextType {
   // Auth & RBAC
@@ -308,7 +309,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const map = new Map<string, LatenessRecord>();
             // Add server records first
             allData.records.forEach((r: any) => {
-              if (r && r.id) map.set(String(r.id), r as LatenessRecord);
+              if (r && r.id) {
+                const cleanDate = normalizeDateString(r.event_date);
+                const rawArr = r.arrival_time ? String(r.arrival_time).trim() : '07:15';
+                const cleanArr = rawArr.length > 8 && rawArr.includes(':')
+                  ? rawArr.substring(rawArr.indexOf(':') - 2, rawArr.indexOf(':') + 3)
+                  : (rawArr.length >= 5 ? rawArr.substring(0, 5) : rawArr);
+                map.set(String(r.id), {
+                  ...r,
+                  event_date: cleanDate,
+                  arrival_time: cleanArr,
+                } as LatenessRecord);
+              }
             });
             // Keep any recent local records not yet synced
             prev.forEach(r => {
@@ -733,19 +745,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const reason = reasons.find(r => r.id === data.reasonId) || reasons[0];
+    const cleanEventDate = normalizeDateString(data.eventDate);
 
     // Check duplicate detection
     const isDuplicate = records.some(r => 
       !r.is_cancelled &&
       r.student_id === data.studentId && 
-      r.event_date === data.eventDate
+      normalizeDateString(r.event_date) === cleanEventDate
     );
 
     if (isDuplicate && !data.allowDuplicateOverride) {
       return {
         success: false,
         isDuplicate: true,
-        message: `Siswa ${student.full_name} sudah tercatat terlambat hari ini (${data.eventDate}).`,
+        message: `Siswa ${student.full_name} sudah tercatat terlambat pada tanggal ${cleanEventDate}.`,
       };
     }
 
@@ -754,7 +767,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const [schH, schM] = scheduledTime.split(':').map(Number);
     const diffMinutes = Math.max(1, (arrH * 60 + arrM) - (schH * 60 + schM));
 
-    const dateObj = new Date(data.eventDate);
+    const [y, m, d] = cleanEventDate.split('-').map(Number);
+    const dateObj = new Date(y, m - 1, d);
     const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const dayName = days[dateObj.getDay()] || 'Senin';
 
@@ -769,7 +783,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       class_name: student.class_name,
       department_id: student.department_id,
       department_code: student.department_code,
-      event_date: data.eventDate,
+      event_date: cleanEventDate,
       day_name: dayName,
       arrival_time: data.arrivalTime.length === 5 ? `${data.arrivalTime}:00` : data.arrivalTime,
       scheduled_time: scheduledTime,

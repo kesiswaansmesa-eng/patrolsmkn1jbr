@@ -4,24 +4,72 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
-      // Defensive shim: allow browser extensions to set window.fetch even if original descriptor has only a getter
+      // Defensive Extension Protection:
+      // 1. Ensure fetch can be reassigned on both window and Window.prototype without throwing "Cannot set property fetch of #<Window> which has only a getter"
       (function() {
         try {
-          var origFetch = window.fetch;
-          var desc = Object.getOwnPropertyDescriptor(window, 'fetch') || 
-                     Object.getOwnPropertyDescriptor(Object.getPrototypeOf(window) || {}, 'fetch');
-          if (!desc || (!desc.writable && !desc.set)) {
-            var currentFetch = origFetch;
+          var rawFetch = window.fetch;
+          var activeFetch = rawFetch;
+
+          // Provide writable getter/setter on Window.prototype if needed
+          if (typeof Window !== 'undefined' && Window.prototype) {
+            try {
+              var protoDesc = Object.getOwnPropertyDescriptor(Window.prototype, 'fetch');
+              if (protoDesc && (!protoDesc.writable && !protoDesc.set)) {
+                Object.defineProperty(Window.prototype, 'fetch', {
+                  get: function() { return activeFetch; },
+                  set: function(fn) { activeFetch = fn; },
+                  configurable: true,
+                  enumerable: true
+                });
+              }
+            } catch (e1) {}
+          }
+
+          // Provide writable getter/setter directly on window
+          try {
             Object.defineProperty(window, 'fetch', {
-              get: function() { return currentFetch; },
-              set: function(fn) { currentFetch = fn; },
+              get: function() { return activeFetch; },
+              set: function(fn) { activeFetch = fn; },
               configurable: true,
               enumerable: true
             });
+          } catch (e2) {
+            try { window.fetch = activeFetch; } catch (e3) {}
           }
-        } catch (e) {
-          console.warn('Fetch setter shim error:', e);
+        } catch (e) {}
+
+        // 2. Intercept and isolate third-party browser extension errors (e.g. Urban VPN Proxy)
+        // so they do not crash the host app or pollute error handlers
+        function isExtensionError(msg, src, err) {
+          var strMsg = String(msg || '');
+          var strSrc = String(src || '');
+          var strStack = String((err && err.stack) || '');
+          return (
+            strSrc.indexOf('chrome-extension://') !== -1 ||
+            strSrc.indexOf('moz-extension://') !== -1 ||
+            strSrc.indexOf('safari-extension://') !== -1 ||
+            strStack.indexOf('chrome-extension://') !== -1 ||
+            strMsg.indexOf('Cannot set property fetch of #<Window>') !== -1 ||
+            strMsg.indexOf('has only a getter') !== -1
+          );
         }
+
+        window.addEventListener('error', function(e) {
+          if (isExtensionError(e.message, e.filename, e.error)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = e.reason;
+          if (isExtensionError(reason && reason.message, '', reason)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
       })();
     </script>
     <title>PATROL SMESA - Sistem Tracing Keterlambatan SMKN 1 Jember</title>
