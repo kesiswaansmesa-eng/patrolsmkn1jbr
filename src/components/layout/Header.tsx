@@ -137,16 +137,26 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenSettin
         <div className="flex items-center gap-2 sm:gap-3">
           {/* Google Sheets status badge */}
           <button
-            onClick={onOpenSettings}
-            className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
+            onClick={() => {
+              if (currentUser.role === 'admin') {
+                onOpenSettings();
+              }
+            }}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border transition-all ${
+              currentUser.role === 'admin' ? 'cursor-pointer hover:bg-opacity-80' : 'cursor-default'
+            } ${
               isGoogleSheetsConnected
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs'
-                : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-300 shadow-xs'
+                : 'bg-amber-50 text-amber-800 border-amber-300'
             }`}
             title={
-              isGoogleSheetsConnected
-                ? `Terhubung ke Google Spreadsheet • Terakhir sinkron: ${lastSyncedAt ? lastSyncedAt.toLocaleTimeString('id-ID') : 'Baru saja'}${isAutoSyncEnabled ? ' • Realtime Auto-Sync Aktif' : ''}`
-                : 'Google Sheets belum terhubung. Klik untuk konfigurasi URL Apps Script'
+              currentUser.role === 'admin'
+                ? (isGoogleSheetsConnected
+                    ? `Terhubung ke Google Spreadsheet • Terakhir sinkron: ${lastSyncedAt ? lastSyncedAt.toLocaleTimeString('id-ID') : 'Baru saja'}${isAutoSyncEnabled ? ' • Realtime Auto-Sync Aktif' : ''} (Klik untuk buka Pengaturan)`
+                    : 'Google Sheets belum terhubung. Klik untuk konfigurasi URL Apps Script di Pengaturan')
+                : (isGoogleSheetsConnected
+                    ? `Terhubung ke Google Spreadsheet (Database Live) • Terakhir sinkron: ${lastSyncedAt ? lastSyncedAt.toLocaleTimeString('id-ID') : 'Baru saja'}`
+                    : 'Mode Offline / Demo Lokal')
             }
           >
             {isGoogleSheetsConnected ? (

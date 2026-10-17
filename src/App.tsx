@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { ShieldAlert } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
@@ -18,9 +19,16 @@ import { AuditLogView } from './components/audit/AuditLogView';
 import { SettingsView } from './components/settings/SettingsView';
 
 const MainAppContent: React.FC = () => {
-  const { isAuthenticated } = useApp();
+  const { isAuthenticated, currentUser } = useApp();
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Proteksi: Menu Pengaturan hanya ada dan aktif untuk akun Administrator saja
+  useEffect(() => {
+    if (currentTab === 'settings' && currentUser.role !== 'admin') {
+      setCurrentTab('dashboard');
+    }
+  }, [currentUser.role, currentTab]);
 
   // If user is not authenticated, show the Login View directly
   if (!isAuthenticated) {
@@ -84,6 +92,25 @@ const MainAppContent: React.FC = () => {
       case 'audit':
         return <AuditLogView />;
       case 'settings':
+        if (currentUser.role !== 'admin') {
+          return (
+            <div className="bg-white rounded-2xl p-8 border border-slate-200 text-center max-w-lg mx-auto mt-12 shadow-sm">
+              <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-4">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900">Akses Terbatas: Administrator</h3>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                Menu Pengaturan Sistem hanya dapat diakses dan dikelola oleh akun <strong>Administrator</strong>. Silakan beralih ke akun Administrator melalui menu profil jika Anda berwenang mengatur konfigurasi.
+              </p>
+              <button
+                onClick={() => setCurrentTab('dashboard')}
+                className="mt-5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Kembali ke Dashboard
+              </button>
+            </div>
+          );
+        }
         return <SettingsView />;
       default:
         return (

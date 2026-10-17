@@ -57,9 +57,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return role === 'admin' || role === 'tim_kesiswaan' || role === 'kkk' || role === 'wali_kelas' || role === 'petugas_piket';
       case 'users':
       case 'audit':
-        return role === 'admin';
       case 'settings':
-        return role === 'admin' || role === 'kepala_sekolah' || role === 'tim_kesiswaan';
+        return role === 'admin';
       case 'login':
         return true;
       default:
@@ -80,7 +79,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'reports', label: 'Laporan & Ekspor', icon: FileText },
     { id: 'users', label: 'Data Pengguna & RBAC', icon: UserCog },
     { id: 'audit', label: 'Audit Log Aktivitas', icon: ShieldCheck },
-    { id: 'settings', label: 'Pengaturan & Supabase', icon: Settings },
+    { id: 'settings', label: 'Pengaturan Sistem', icon: Settings, badge: 'Admin' },
   ];
 
   const filteredItems = navItems.filter(item => isMenuAllowed(item.id, currentUser.role));
