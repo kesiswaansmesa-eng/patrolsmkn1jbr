@@ -446,6 +446,7 @@ function initializeAllSheets(ss, seedData) {
     if (seedData.reasons) overwriteSheet(ss, SHEETS.ALASAN, SHEET_HEADERS['Alasan_Keterlambatan'], seedData.reasons);
     if (seedData.users) overwriteSheet(ss, SHEETS.PENGGUNA, SHEET_HEADERS['Pengguna_RBAC'], seedData.users);
     if (seedData.coachings) overwriteSheet(ss, SHEETS.PEMBINAAN, SHEET_HEADERS['Pembinaan_BK'], seedData.coachings);
+    if (seedData.settings) overwriteSheet(ss, SHEETS.PENGATURAN, SHEET_HEADERS['Pengaturan'], seedData.settings);
   }
   return summary;
 }
