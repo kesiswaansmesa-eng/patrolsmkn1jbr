@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Settings, Database, CheckCircle, Copy, 
   ExternalLink, RotateCcw, Save, ShieldAlert, Code2, AlertCircle, RefreshCw, 
   Sparkles, UploadCloud, Info, CheckCircle2, ChevronRight, HelpCircle, Layers,
-  FileSpreadsheet, Zap, Clock, Table, Check, ArrowRight
+  FileSpreadsheet, Zap, Clock, Table, Check, ArrowRight, GraduationCap, UserCheck, Award
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GOOGLE_APPS_SCRIPT_CODE, TABLES_MENU_STRUCTURE } from '../../lib/googleAppsScriptCode';
@@ -43,15 +43,42 @@ export const SettingsView: React.FC = () => {
     details?: any;
   } | null>(null);
 
-  // App Settings Form
+  // App Settings Form (Termasuk Kepala Sekolah & Waka Kesiswaan)
   const [appForm, setAppForm] = useState({
-    school_name: settings.school_name,
-    default_start_time: settings.default_start_time,
-    academic_year: settings.academic_year,
-    semester: settings.semester,
-    warning_threshold_sp1: settings.warning_threshold_sp1,
-    warning_threshold_sp2: settings.warning_threshold_sp2,
+    school_name: settings.school_name || 'SMK NEGERI 1 JEMBER',
+    school_address: settings.school_address || 'Jalan Jambu No. 17 Telp. (0331) 483108 Fax. (0331) 429690, Jember',
+    headmaster_name: settings.headmaster_name || 'Drs. H. M. Syaifullah, M.Pd.',
+    headmaster_nip: settings.headmaster_nip || '196708211993031005',
+    vice_headmaster_name: settings.vice_headmaster_name || 'Wahyu Tri Utomo, S.Pd.',
+    vice_headmaster_nip: settings.vice_headmaster_nip || '198604122010011012',
+    city: settings.city || 'Jember',
+    default_start_time: settings.default_start_time || '07:00',
+    academic_year: settings.academic_year || '2024/2025',
+    semester: settings.semester || 'Ganjil',
+    warning_threshold_sp1: settings.warning_threshold_sp1 || 3,
+    warning_threshold_sp2: settings.warning_threshold_sp2 || 5,
   });
+
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
+
+  // Sinkronisasi otomatis form jika data settings dari Google Sheets berubah
+  useEffect(() => {
+    setAppForm({
+      school_name: settings.school_name || 'SMK NEGERI 1 JEMBER',
+      school_address: settings.school_address || 'Jalan Jambu No. 17 Telp. (0331) 483108 Fax. (0331) 429690, Jember',
+      headmaster_name: settings.headmaster_name || 'Drs. H. M. Syaifullah, M.Pd.',
+      headmaster_nip: settings.headmaster_nip || '196708211993031005',
+      vice_headmaster_name: settings.vice_headmaster_name || 'Wahyu Tri Utomo, S.Pd.',
+      vice_headmaster_nip: settings.vice_headmaster_nip || '198604122010011012',
+      city: settings.city || 'Jember',
+      default_start_time: settings.default_start_time || '07:00',
+      academic_year: settings.academic_year || '2024/2025',
+      semester: settings.semester || 'Ganjil',
+      warning_threshold_sp1: settings.warning_threshold_sp1 || 3,
+      warning_threshold_sp2: settings.warning_threshold_sp2 || 5,
+    });
+  }, [settings]);
 
   const handleTestConnection = async () => {
     if (!urlInput.trim()) {
@@ -155,17 +182,33 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setCopiedScript(false), 3000);
   };
 
-  const handleSaveAppSettings = (e: React.FormEvent) => {
+  const handleSaveAppSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings({
-      school_name: appForm.school_name,
-      default_start_time: appForm.default_start_time,
-      academic_year: appForm.academic_year,
-      semester: appForm.semester as any,
-      warning_threshold_sp1: Number(appForm.warning_threshold_sp1),
-      warning_threshold_sp2: Number(appForm.warning_threshold_sp2),
-    });
-    alert('Pengaturan sekolah berhasil diperbarui.');
+    setIsSavingSettings(true);
+    setSaveSuccessMessage(null);
+    try {
+      await updateSettings({
+        school_name: appForm.school_name.trim(),
+        school_address: appForm.school_address.trim(),
+        headmaster_name: appForm.headmaster_name.trim(),
+        headmaster_nip: appForm.headmaster_nip.trim(),
+        vice_headmaster_name: appForm.vice_headmaster_name.trim(),
+        vice_headmaster_nip: appForm.vice_headmaster_nip.trim(),
+        city: appForm.city.trim(),
+        default_start_time: appForm.default_start_time,
+        academic_year: appForm.academic_year.trim(),
+        semester: appForm.semester as any,
+        warning_threshold_sp1: Number(appForm.warning_threshold_sp1),
+        warning_threshold_sp2: Number(appForm.warning_threshold_sp2),
+      });
+      setSaveSuccessMessage('Data Kepala Sekolah, Waka Kesiswaan & Konfigurasi Sekolah berhasil disimpan ke Database!');
+      setTimeout(() => setSaveSuccessMessage(null), 5000);
+      alert('Data Kepala Sekolah & Waka Kesiswaan berhasil disimpan!\n\nPerubahan ini langsung masuk ke database/tabel Google Sheets dan otomatis diterapkan ke seluruh Lembar Laporan & Ekspor.');
+    } catch (err: any) {
+      alert('Gagal menyimpan pengaturan: ' + (err?.message || err));
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
   // Helper count for tables
@@ -178,7 +221,7 @@ export const SettingsView: React.FC = () => {
       case 'Alasan_Keterlambatan': return reasons.length;
       case 'Pengguna_RBAC': return users.length;
       case 'Pembinaan_BK': return coachings.length;
-      case 'Pengaturan': return 6;
+      case 'Pengaturan': return 12;
       default: return 0;
     }
   };
@@ -282,8 +325,8 @@ export const SettingsView: React.FC = () => {
               : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
           }`}
         >
-          <Settings className="w-4 h-4" />
-          <span>Pengaturan Sekolah & Jam</span>
+          <GraduationCap className="w-4 h-4" />
+          <span>Pimpinan Sekolah & Jam</span>
         </button>
       </div>
 
@@ -776,16 +819,223 @@ export const SettingsView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 5: PENGATURAN SEKOLAH & JAM */}
+      {/* TAB 5: PENGATURAN SEKOLAH, PIMPINAN & JAM */}
       {activeTab === 'sekolah' && (
         <div className="space-y-6">
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs">
-            <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <Settings className="w-4 h-4 text-emerald-600" />
-              Parameter Operasional Jam Gerbang & Toleransi
-            </h2>
+          <form onSubmit={handleSaveAppSettings} className="space-y-6">
+            
+            {/* CARD 1: PIMPINAN SEKOLAH & PEJABAT PENANDATANGAN DOKUMEN */}
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                <div>
+                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <GraduationCap className="w-5 h-5 text-emerald-600" />
+                    Pimpinan Sekolah & Pejabat Penandatangan Dokumen Resmi
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Data Kepala Sekolah & Waka Kesiswaan ini tersimpan di database/tabel Google Sheets dan secara otomatis dicetak pada lembar pengesahan Laporan & Berkas Ekspor.
+                  </p>
+                </div>
+                <span className="self-start sm:self-auto px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-[11px] font-semibold flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Otomatis Masuk Laporan & Ekspor</span>
+                </span>
+              </div>
 
-            <form onSubmit={handleSaveAppSettings} className="space-y-4">
+              {/* Grid Kepala Sekolah & Waka Kesiswaan */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                
+                {/* Bagian 1: Kepala Sekolah */}
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                    <span className="w-6 h-6 rounded-lg bg-blue-700 text-white flex items-center justify-center text-xs">
+                      <Award className="w-3.5 h-3.5" />
+                    </span>
+                    <span>1. Kepala Sekolah (Mengetahui)</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Nama Lengkap Kepala Sekolah (beserta Gelar):
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={appForm.headmaster_name}
+                      onChange={(e) => setAppForm({ ...appForm, headmaster_name: e.target.value })}
+                      placeholder="Contoh: Drs. H. M. Syaifullah, M.Pd."
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Tampil di sisi kiri lembar tanda tangan dokumen laporan.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      NIP Kepala Sekolah:
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={appForm.headmaster_nip}
+                      onChange={(e) => setAppForm({ ...appForm, headmaster_nip: e.target.value })}
+                      placeholder="Contoh: 196708211993031005"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Nomor Induk Pegawai 18 digit resmi tanpa spasi/tanda hubung.
+                    </span>
+                  </div>
+                </div>
+
+                {/* Bagian 2: Waka Bidang Kesiswaan */}
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex items-center gap-2 text-slate-900 font-bold text-xs">
+                    <span className="w-6 h-6 rounded-lg bg-emerald-700 text-white flex items-center justify-center text-xs">
+                      <UserCheck className="w-3.5 h-3.5" />
+                    </span>
+                    <span>2. Wakil Kepala Sekolah Bidang Kesiswaan</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Nama Lengkap Waka Kesiswaan (beserta Gelar):
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={appForm.vice_headmaster_name}
+                      onChange={(e) => setAppForm({ ...appForm, vice_headmaster_name: e.target.value })}
+                      placeholder="Contoh: Wahyu Tri Utomo, S.Pd."
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Tampil di posisi tengah pengesahan laporan kedisiplinan & kesiswaan.
+                    </span>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      NIP Waka Bidang Kesiswaan:
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={appForm.vice_headmaster_nip}
+                      onChange={(e) => setAppForm({ ...appForm, vice_headmaster_nip: e.target.value })}
+                      placeholder="Contoh: 198604122010011012"
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-800 focus:ring-1 focus:ring-emerald-500 outline-none"
+                    />
+                    <span className="text-[10px] text-slate-500 mt-0.5 block">
+                      Nomor Induk Pegawai penanggung jawab pembinaan kesiswaan.
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Kota Pengesahan & Alamat Sekolah Kop */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Kota / Wilayah Tanda Tangan Dokumen:
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={appForm.city}
+                    onChange={(e) => setAppForm({ ...appForm, city: e.target.value })}
+                    placeholder="Contoh: Jember"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500">
+                    Format cetak tanggal: <strong className="text-slate-700">{appForm.city || 'Jember'}, [Tanggal Cetak]</strong>
+                  </span>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Alamat Lengkap & Kontak Sekolah (Kop Surat Resmi):
+                  </label>
+                  <input
+                    type="text"
+                    value={appForm.school_address}
+                    onChange={(e) => setAppForm({ ...appForm, school_address: e.target.value })}
+                    placeholder="Jalan Jambu No. 17 Telp. (0331) 483108 Fax. (0331) 429690, Jember"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none"
+                  />
+                  <span className="text-[10px] text-slate-500">
+                    Dicantumkan pada kepala lembar cetak laporan & berkas ekspor.
+                  </span>
+                </div>
+              </div>
+
+              {/* LIVE PREVIEW LEMBAR PENGESAHAN */}
+              <div className="mt-4 p-4 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/40 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+                    Pratinjau Langsung Lembar Pengesahan Laporan & Ekspor (Realtime Preview):
+                  </span>
+                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                    Sesuai Format Resmi SMKN 1 Jember
+                  </span>
+                </div>
+
+                <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-2xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center text-xs">
+                    <div className="p-2 border border-slate-100 rounded-lg">
+                      <p className="text-[11px] text-slate-500 mb-8">
+                        Mengetahui,<br />
+                        Kepala {appForm.school_name || 'SMKN 1 Jember'}
+                      </p>
+                      <p className="font-extrabold text-slate-900 underline">
+                        {appForm.headmaster_name || '(Nama Kepala Sekolah)'}
+                      </p>
+                      <p className="text-[10px] text-slate-600 font-mono">
+                        NIP. {appForm.headmaster_nip || '-'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 border border-slate-100 rounded-lg">
+                      <p className="text-[11px] text-slate-500 mb-8">
+                        Waka Bidang Kesiswaan,<br />
+                        {appForm.school_name || 'SMKN 1 Jember'}
+                      </p>
+                      <p className="font-extrabold text-slate-900 underline">
+                        {appForm.vice_headmaster_name || '(Nama Waka Kesiswaan)'}
+                      </p>
+                      <p className="text-[10px] text-slate-600 font-mono">
+                        NIP. {appForm.vice_headmaster_nip || '-'}
+                      </p>
+                    </div>
+
+                    <div className="p-2 border border-slate-100 rounded-lg">
+                      <p className="text-[11px] text-slate-500 mb-8">
+                        {appForm.city || 'Jember'}, [Tanggal Cetak]<br />
+                        Petugas Pencatat Laporan
+                      </p>
+                      <p className="font-extrabold text-slate-900 underline">
+                        [Nama Petugas / Guru Piket]
+                      </p>
+                      <p className="text-[10px] text-slate-600 font-mono">
+                        NIP. [NIP Petugas]
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* CARD 2: PARAMETER OPERASIONAL JAM GERBANG & THRESHOLD SP */}
+            <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
+                <Clock className="w-4 h-4 text-emerald-600" />
+                Parameter Operasional Jam Gerbang, Periode & Ambang SP
+              </h2>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -795,7 +1045,7 @@ export const SettingsView: React.FC = () => {
                     type="text"
                     value={appForm.school_name}
                     onChange={(e) => setAppForm({ ...appForm, school_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-emerald-500 outline-none"
                   />
                 </div>
 
@@ -810,7 +1060,7 @@ export const SettingsView: React.FC = () => {
                     onChange={(e) => setAppForm({ ...appForm, default_start_time: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-1 focus:ring-emerald-500 outline-none"
                   />
-                  <span className="text-[10px] text-slate-500">Kedatangan setelah jam ini dihitung terlambat.</span>
+                  <span className="text-[10px] text-slate-500">Kedatangan siswa setelah jam ini otomatis dihitung terlambat.</span>
                 </div>
 
                 <div>
@@ -834,8 +1084,8 @@ export const SettingsView: React.FC = () => {
                     onChange={(e) => setAppForm({ ...appForm, semester: e.target.value as any })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-medium focus:ring-1 focus:ring-emerald-500 outline-none"
                   >
-                    <option value="ganjil">Ganjil</option>
-                    <option value="genap">Genap</option>
+                    <option value="Ganjil">Ganjil</option>
+                    <option value="Genap">Genap</option>
                   </select>
                 </div>
 
@@ -869,27 +1119,41 @@ export const SettingsView: React.FC = () => {
                   <span className="text-[10px] text-slate-500">Penerbitan surat pemanggilan orang tua ke sekolah.</span>
                 </div>
               </div>
+            </div>
 
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                <button
-                  type="button"
-                  onClick={resetToDemoData}
-                  className="px-4 py-2 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset ke Data Demo Awal</span>
-                </button>
+            {/* ACTION BAR */}
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={resetToDemoData}
+                className="w-full sm:w-auto px-4 py-2 border border-rose-300 text-rose-700 hover:bg-rose-50 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset ke Nilai Bawaan SMESA</span>
+              </button>
 
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  <span>Simpan Pengaturan Sekolah</span>
-                </button>
-              </div>
-            </form>
-          </div>
+              {saveSuccessMessage && (
+                <div className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200 flex items-center gap-1.5">
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>{saveSuccessMessage}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSavingSettings}
+                className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isSavingSettings ? (
+                  <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                <span>{isSavingSettings ? 'Menyimpan & Menyinkronkan...' : 'Simpan Data Pimpinan & Pengaturan'}</span>
+              </button>
+            </div>
+
+          </form>
         </div>
       )}
 

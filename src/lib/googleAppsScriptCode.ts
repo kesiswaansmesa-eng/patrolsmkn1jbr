@@ -589,13 +589,13 @@ export const TABLES_MENU_STRUCTURE: TableMenuDefinition[] = [
     ]
   },
   {
-    menuName: 'Pengaturan Sistem Sekolah',
+    menuName: 'Pengaturan Sistem & Pimpinan Sekolah',
     sheetName: 'Pengaturan',
-    description: 'Konfigurasi operasional jam masuk gerbang, tahun ajaran aktif, dan threshold SP.',
+    description: 'Menyimpan konfigurasi identitas Kepala Sekolah & Waka Kesiswaan untuk pengesahan dokumen/ekspor, jam masuk gerbang, dan batas SP.',
     columns: [
-      { name: 'key', type: 'TEXT (PK)', desc: 'Kunci parameter pengaturan' },
-      { name: 'value', type: 'TEXT', desc: 'Nilai parameter' },
-      { name: 'description', type: 'TEXT', desc: 'Deskripsi fungsi pengaturan' }
+      { name: 'key', type: 'TEXT (PK)', desc: 'Kunci parameter (school_name, headmaster_name, headmaster_nip, vice_headmaster_name, vice_headmaster_nip, city, dll)' },
+      { name: 'value', type: 'TEXT', desc: 'Nilai data parameter' },
+      { name: 'description', type: 'TEXT', desc: 'Deskripsi fungsi parameter' }
     ]
   }
 ];

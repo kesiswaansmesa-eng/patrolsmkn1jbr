@@ -79,7 +79,7 @@ interface AppContextType {
   addReason: (reason: Omit<LatenessReason, 'id'>) => Promise<boolean>;
   updateReason: (id: string, reason: Partial<LatenessReason>) => Promise<boolean>;
   
-  updateSettings: (newSettings: Partial<AppSettings>) => void;
+  updateSettings: (newSettings: Partial<AppSettings>) => Promise<boolean>;
   
   // Google Sheets Backend & Realtime Sync Engine
   isGoogleSheetsConnected: boolean;
@@ -224,7 +224,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [settings, setSettingsState] = useState<AppSettings>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    return saved ? JSON.parse(saved) : INITIAL_SETTINGS;
+    if (saved) {
+      try {
+        return { ...INITIAL_SETTINGS, ...JSON.parse(saved) };
+      } catch (e) {
+        return INITIAL_SETTINGS;
+      }
+    }
+    return INITIAL_SETTINGS;
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
@@ -339,6 +346,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // Update coachings
         if (Array.isArray(allData.coachings) && allData.coachings.length > 0) {
           setCoachings(allData.coachings as CoachingRecord[]);
+        }
+
+        // Update settings (Pimpinan Sekolah & Konfigurasi Operasional)
+        if (Array.isArray(allData.settings) && allData.settings.length > 0) {
+          setSettingsState(prev => {
+            const updated = { ...prev };
+            allData.settings.forEach((item: any) => {
+              if (item && item.key && item.value !== undefined && item.value !== null && item.value !== '') {
+                const k = String(item.key).trim();
+                const val = String(item.value).trim();
+                if (k === 'warning_threshold_sp1' || k === 'warning_threshold_sp2' || k === 'warning_threshold_sp3') {
+                  const num = Number(val);
+                  if (!isNaN(num)) (updated as any)[k] = num;
+                } else if (k === 'allow_same_day_duplicate') {
+                  (updated as any)[k] = val.toLowerCase() === 'true';
+                } else if (k === 'semester') {
+                  (updated as any)[k] = val.toLowerCase() === 'genap' ? 'Genap' : 'Ganjil';
+                } else {
+                  (updated as any)[k] = val;
+                }
+              }
+            });
+            return updated;
+          });
         }
 
         setSyncStatusMessage('Data tersinkronisasi sempurna.');
@@ -523,12 +554,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       users,
       coachings,
       settings: [
-        { key: 'school_name', value: settings.school_name, description: 'Nama Sekolah Resmi' },
-        { key: 'default_start_time', value: settings.default_start_time, description: 'Batas Waktu Masuk Gerbang' },
-        { key: 'academic_year', value: settings.academic_year, description: 'Tahun Ajaran Aktif' },
-        { key: 'semester', value: settings.semester, description: 'Semester Aktif' },
-        { key: 'warning_threshold_sp1', value: String(settings.warning_threshold_sp1), description: 'Batas Panggilan SP 1' },
-        { key: 'warning_threshold_sp2', value: String(settings.warning_threshold_sp2), description: 'Batas Panggilan SP 2' },
+        { key: 'school_name', value: settings.school_name || 'SMK NEGERI 1 JEMBER', description: 'Nama Sekolah Resmi' },
+        { key: 'school_tagline', value: settings.school_tagline || '', description: 'Motto / Tagline Sekolah' },
+        { key: 'school_address', value: settings.school_address || '', description: 'Alamat Sekolah & Kop Surat' },
+        { key: 'headmaster_name', value: settings.headmaster_name || '', description: 'Nama Lengkap Kepala Sekolah' },
+        { key: 'headmaster_nip', value: settings.headmaster_nip || '', description: 'NIP Kepala Sekolah' },
+        { key: 'vice_headmaster_name', value: settings.vice_headmaster_name || '', description: 'Nama Wakil Kepala Sekolah Bidang Kesiswaan' },
+        { key: 'vice_headmaster_nip', value: settings.vice_headmaster_nip || '', description: 'NIP Wakil Kepala Sekolah Bidang Kesiswaan' },
+        { key: 'city', value: settings.city || 'Jember', description: 'Kota Penerbitan Laporan / Tanda Tangan' },
+        { key: 'default_start_time', value: settings.default_start_time || '07:00', description: 'Batas Waktu Masuk Gerbang' },
+        { key: 'academic_year', value: settings.academic_year || '2024/2025', description: 'Tahun Ajaran Aktif' },
+        { key: 'semester', value: settings.semester || 'Ganjil', description: 'Semester Aktif' },
+        { key: 'warning_threshold_sp1', value: String(settings.warning_threshold_sp1 || 3), description: 'Batas Panggilan SP 1' },
+        { key: 'warning_threshold_sp2', value: String(settings.warning_threshold_sp2 || 5), description: 'Batas Panggilan SP 2' },
+        { key: 'warning_threshold_sp3', value: String(settings.warning_threshold_sp3 || 8), description: 'Batas Panggilan SP 3' },
       ],
     };
 
@@ -1037,12 +1076,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  const updateSettings = (newSettings: Partial<AppSettings>) => {
+  const updateSettings = async (newSettings: Partial<AppSettings>): Promise<boolean> => {
+    let updatedObj: AppSettings = { ...settings, ...newSettings };
     setSettingsState(prev => {
-      const updated = { ...prev, ...newSettings };
-      return updated;
+      updatedObj = { ...prev, ...newSettings };
+      return updatedObj;
     });
-    logAudit('UPDATE', 'PENGATURAN', 'Memperbarui konfigurasi aplikasi.');
+
+    logAudit(
+      'UPDATE', 
+      'PENGATURAN', 
+      `Memperbarui data pimpinan sekolah: Kepsek "${updatedObj.headmaster_name || '-'}" & Waka Kesiswaan "${updatedObj.vice_headmaster_name || '-'}"`
+    );
+
+    // Otomatis sinkronisasi ke tabel Pengaturan di Google Sheets jika terhubung
+    try {
+      const cfg = getGasConfig();
+      if (cfg.isConfigured && cfg.url) {
+        const settingsRows = [
+          { key: 'school_name', value: updatedObj.school_name || 'SMK NEGERI 1 JEMBER', description: 'Nama Sekolah Resmi' },
+          { key: 'school_tagline', value: updatedObj.school_tagline || '', description: 'Motto / Tagline Sekolah' },
+          { key: 'school_address', value: updatedObj.school_address || '', description: 'Alamat Sekolah & Kop Surat' },
+          { key: 'headmaster_name', value: updatedObj.headmaster_name || '', description: 'Nama Lengkap Kepala Sekolah' },
+          { key: 'headmaster_nip', value: updatedObj.headmaster_nip || '', description: 'NIP Kepala Sekolah' },
+          { key: 'vice_headmaster_name', value: updatedObj.vice_headmaster_name || '', description: 'Nama Wakil Kepala Sekolah Bidang Kesiswaan' },
+          { key: 'vice_headmaster_nip', value: updatedObj.vice_headmaster_nip || '', description: 'NIP Wakil Kepala Sekolah Bidang Kesiswaan' },
+          { key: 'city', value: updatedObj.city || 'Jember', description: 'Kota Penerbitan Laporan / Tanda Tangan' },
+          { key: 'default_start_time', value: updatedObj.default_start_time || '07:00', description: 'Batas Waktu Masuk Gerbang' },
+          { key: 'academic_year', value: updatedObj.academic_year || '2024/2025', description: 'Tahun Ajaran Aktif' },
+          { key: 'semester', value: updatedObj.semester || 'Ganjil', description: 'Semester Aktif' },
+          { key: 'warning_threshold_sp1', value: String(updatedObj.warning_threshold_sp1 || 3), description: 'Batas Panggilan SP 1' },
+          { key: 'warning_threshold_sp2', value: String(updatedObj.warning_threshold_sp2 || 5), description: 'Batas Panggilan SP 2' },
+          { key: 'warning_threshold_sp3', value: String(updatedObj.warning_threshold_sp3 || 8), description: 'Batas Panggilan SP 3' },
+        ];
+        await postToGoogleSheets('syncAll', { data: { settings: settingsRows } });
+      }
+    } catch (err) {
+      console.warn('Gagal sync pengaturan ke Google Sheets:', err);
+    }
+
+    return true;
   };
 
   // User Management (RBAC) CRUD & Password Management

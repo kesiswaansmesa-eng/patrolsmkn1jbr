@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { formatIndonesianDate, getWIBTodayString, isDateToday, isDateThisWeek, isDateThisMonth } from '../../utils/dateUtils';
-import { exportToCSV } from '../../utils/exportUtils';
+import { exportToCSV, exportOfficialReportToCSV } from '../../utils/exportUtils';
 
 export type ReportType = 
   | 'harian' 
@@ -67,7 +67,8 @@ export const ReportsView: React.FC = () => {
   }, [scopedRecords, filterDept, filterClass, reportType, selectedDate]);
 
   // Handle Export CSV
-  const handleExportCSV = () => {
+  // Handle Export CSV Lengkap dengan Lembar Pengesahan Resmi (Kepsek & Waka Kesiswaan)
+  const handleExportOfficialReport = () => {
     const rows = filteredRecords.map((r, i) => ({
       No: i + 1,
       Tanggal: r.event_date,
@@ -84,7 +85,52 @@ export const ReportsView: React.FC = () => {
       Petugas_Pencatat: r.recorded_by_name,
     }));
 
-    exportToCSV(`Laporan_${reportType}_SMESA_${getWIBTodayString()}`, rows);
+    const periodLabel = reportType === 'harian' 
+      ? formatIndonesianDate(selectedDate) 
+      : `Tahun Ajaran ${settings.academic_year || '2024/2025'} (Semester ${settings.semester || 'Ganjil'})`;
+
+    exportOfficialReportToCSV({
+      filename: `Laporan_Resmi_${reportType}_SMESA_${getWIBTodayString()}`,
+      reportTitle: currentReportTitle,
+      periodText: periodLabel,
+      schoolName: settings.school_name || 'SMK NEGERI 1 JEMBER',
+      schoolAddress: settings.school_address || 'Jalan Jambu No. 17 Telp. (0331) 483108 Fax. (0331) 429690, Jember',
+      headmasterName: settings.headmaster_name || 'Drs. H. M. Syaifullah, M.Pd.',
+      headmasterNip: settings.headmaster_nip || '196708211993031005',
+      viceHeadmasterName: settings.vice_headmaster_name || 'Wahyu Tri Utomo, S.Pd.',
+      viceHeadmasterNip: settings.vice_headmaster_nip || '198604122010011012',
+      officerName: currentUser.full_name,
+      officerNip: currentUser.nip || '-',
+      city: settings.city || 'Jember',
+      printDateText: formatIndonesianDate(getWIBTodayString()),
+      totalRecordsCount: filteredRecords.length,
+      rows,
+    });
+  };
+
+  // Handle Export CSV Tabel Mentah (Dengan Kolom Pejabat Penandatangan)
+  const handleExportCSV = () => {
+    const rows = filteredRecords.map((r, i) => ({
+      No: i + 1,
+      Tanggal: r.event_date,
+      Hari: r.day_name,
+      Nama_Siswa: r.student_name,
+      NIS: r.nis,
+      Kelas: r.class_name,
+      Jurusan: r.department_code,
+      Jam_Tiba: r.arrival_time,
+      Terlambat_Menit: r.late_duration_minutes,
+      Alasan: r.reason_name,
+      Keterangan: r.notes || '',
+      Status_Pembinaan: r.followup_status,
+      Petugas_Pencatat: r.recorded_by_name,
+      Mengetahui_Kepala_Sekolah: settings.headmaster_name || 'Drs. H. M. Syaifullah, M.Pd.',
+      NIP_Kepala_Sekolah: settings.headmaster_nip || '196708211993031005',
+      Waka_Kesiswaan: settings.vice_headmaster_name || 'Wahyu Tri Utomo, S.Pd.',
+      NIP_Waka_Kesiswaan: settings.vice_headmaster_nip || '198604122010011012',
+    }));
+
+    exportToCSV(`Data_Keterlambatan_${reportType}_SMESA_${getWIBTodayString()}`, rows);
   };
 
   // Handle Print with School Letterhead
@@ -104,24 +150,33 @@ export const ReportsView: React.FC = () => {
             Laporan & Ekspor Dokumen Resmi
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Pencetakan laporan berkala dengan kop resmi SMK Negeri 1 Jember
+            Pencetakan laporan berkala dengan pengesahan Kepala Sekolah & Waka Kesiswaan
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={handleExportCSV}
-            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            onClick={handleExportOfficialReport}
+            className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Unduh laporan lengkap dengan Kop dan Lembar Pengesahan Kepala Sekolah & Waka Kesiswaan"
           >
             <Download className="w-3.5 h-3.5" />
-            Unduh CSV Excel
+            Unduh Excel + Pengesahan Pimpinan
+          </button>
+          <button
+            onClick={handleExportCSV}
+            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Unduh data mentah baris tabel"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-500" />
+            Data Mentah CSV
           </button>
           <button
             onClick={handlePrint}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
-            Cetak / PDF
+            Cetak / PDF Resmi
           </button>
         </div>
       </div>
@@ -318,22 +373,22 @@ export const ReportsView: React.FC = () => {
           </table>
         </div>
 
-        {/* Signature Slots (Official SMK Formalities) */}
+        {/* Signature Slots (Official SMK Formalities - Otomatis dari Pengaturan & Database) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-xs text-center pt-6 border-t border-slate-200 mt-8">
           <div>
-            <p className="text-slate-500 mb-16">Mengetahui,<br />Kepala SMKN 1 Jember</p>
-            <p className="font-extrabold text-slate-900 underline">Drs. H. M. Syaifullah, M.Pd.</p>
-            <p className="text-[10px] text-slate-500 font-mono">NIP. 196708211993031005</p>
+            <p className="text-slate-500 mb-16">Mengetahui,<br />Kepala {settings.school_name || 'SMKN 1 Jember'}</p>
+            <p className="font-extrabold text-slate-900 underline">{settings.headmaster_name || 'Drs. H. M. Syaifullah, M.Pd.'}</p>
+            <p className="text-[10px] text-slate-500 font-mono">NIP. {settings.headmaster_nip || '196708211993031005'}</p>
           </div>
 
           <div className="hidden sm:block">
-            <p className="text-slate-500 mb-16">Waka Bidang Kesiswaan,<br />SMKN 1 Jember</p>
-            <p className="font-extrabold text-slate-900 underline">Wahyu Tri Utomo, S.Pd.</p>
-            <p className="text-[10px] text-slate-500 font-mono">NIP. 198604122010011012</p>
+            <p className="text-slate-500 mb-16">Waka Bidang Kesiswaan,<br />{settings.school_name || 'SMKN 1 Jember'}</p>
+            <p className="font-extrabold text-slate-900 underline">{settings.vice_headmaster_name || 'Wahyu Tri Utomo, S.Pd.'}</p>
+            <p className="text-[10px] text-slate-500 font-mono">NIP. {settings.vice_headmaster_nip || '198604122010011012'}</p>
           </div>
 
           <div>
-            <p className="text-slate-500 mb-16">Jember, {formatIndonesianDate(getWIBTodayString())}<br />Petugas Pencatat,</p>
+            <p className="text-slate-500 mb-16">{settings.city || 'Jember'}, {formatIndonesianDate(getWIBTodayString())}<br />Petugas Pencatat,</p>
             <p className="font-extrabold text-slate-900 underline">{currentUser.full_name}</p>
             <p className="text-[10px] text-slate-500 font-mono">NIP. {currentUser.nip || '-'}</p>
           </div>

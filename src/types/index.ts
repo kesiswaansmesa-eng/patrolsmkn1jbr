@@ -162,6 +162,13 @@ export interface AppSettings {
   warning_threshold_sp2: number; // e.g. 5 times
   warning_threshold_sp3: number; // e.g. 8 times
   allow_same_day_duplicate: boolean;
+  
+  // Leadership & Document Signatures (Pimpinan & Pengesahan Dokumen)
+  headmaster_name: string;      // Nama Kepala Sekolah lengkap dengan gelar
+  headmaster_nip: string;       // NIP Kepala Sekolah
+  vice_headmaster_name: string; // Nama Wakil Kepala Sekolah Bidang Kesiswaan
+  vice_headmaster_nip: string;  // NIP Waka Kesiswaan
+  city: string;                 // Kota penandatanganan dokumen (cth: Jember)
 }
 
 export interface DashboardFilter {

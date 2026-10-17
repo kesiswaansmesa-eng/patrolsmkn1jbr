@@ -161,6 +161,11 @@ export const INITIAL_SETTINGS: AppSettings = {
   warning_threshold_sp2: 5,
   warning_threshold_sp3: 8,
   allow_same_day_duplicate: false,
+  headmaster_name: 'Drs. H. M. Syaifullah, M.Pd.',
+  headmaster_nip: '196708211993031005',
+  vice_headmaster_name: 'Wahyu Tri Utomo, S.Pd.',
+  vice_headmaster_nip: '198604122010011012',
+  city: 'Jember',
 };
 
 // Seed realistic sample transactions for immediate rich charts and leaderboard testing
