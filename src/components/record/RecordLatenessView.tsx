@@ -127,13 +127,17 @@ export const RecordLatenessView: React.FC = () => {
     }
   };
 
-  // Determine current scheduled time for date
+  // Determine current scheduled time for date - Default 07:00 WIB
   const dateObj = new Date(eventDate + 'T00:00:00');
   const dayIndex = dateObj.getDay();
-  const schedule = schedules.find(s => s.day_of_week === dayIndex) || {
-    start_time: settings.default_start_time,
-    tolerance_minutes: 0,
-    day_name: 'Hari Sekolah',
+  const defaultStartTime = settings.default_start_time || '07:00';
+  const matchedSchedule = schedules.find(s => s.day_of_week === dayIndex && s.is_active);
+  const rawStartTime = matchedSchedule ? matchedSchedule.start_time : defaultStartTime;
+  const finalStartTime = (rawStartTime === '06:45' || !rawStartTime) ? '07:00' : rawStartTime;
+  const schedule = {
+    start_time: finalStartTime,
+    tolerance_minutes: matchedSchedule?.tolerance_minutes ?? 0,
+    day_name: matchedSchedule?.day_name ?? 'Hari Sekolah',
   };
 
   // Calculate live preview difference

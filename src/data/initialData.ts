@@ -147,7 +147,7 @@ export const INITIAL_SCHEDULES: SchoolSchedule[] = [
   { day_of_week: 2, day_name: 'Selasa', start_time: '07:00', tolerance_minutes: 0, is_active: true },
   { day_of_week: 3, day_name: 'Rabu', start_time: '07:00', tolerance_minutes: 0, is_active: true },
   { day_of_week: 4, day_name: 'Kamis', start_time: '07:00', tolerance_minutes: 0, is_active: true },
-  { day_of_week: 5, day_name: 'Jumat', start_time: '06:45', tolerance_minutes: 0, is_active: true }, // Jumat Bersih / Senam
+  { day_of_week: 5, day_name: 'Jumat', start_time: '07:00', tolerance_minutes: 0, is_active: true },
 ];
 
 export const INITIAL_SETTINGS: AppSettings = {

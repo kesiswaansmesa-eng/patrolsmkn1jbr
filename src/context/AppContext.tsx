@@ -225,14 +225,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [schedules] = useState<SchoolSchedule[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
-    return saved ? JSON.parse(saved) : INITIAL_SCHEDULES;
+    if (saved) {
+      try {
+        const parsed: SchoolSchedule[] = JSON.parse(saved);
+        // Ensure default masuk sekolah standard is 07:00 WIB
+        return parsed.map(s => (s.start_time === '06:45' ? { ...s, start_time: '07:00' } : s));
+      } catch {
+        return INITIAL_SCHEDULES;
+      }
+    }
+    return INITIAL_SCHEDULES;
   });
 
   const [settings, setSettingsState] = useState<AppSettings>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (saved) {
       try {
-        return { ...INITIAL_SETTINGS, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        return { 
+          ...INITIAL_SETTINGS, 
+          ...parsed,
+          default_start_time: parsed.default_start_time || '07:00',
+        };
       } catch (e) {
         return INITIAL_SETTINGS;
       }

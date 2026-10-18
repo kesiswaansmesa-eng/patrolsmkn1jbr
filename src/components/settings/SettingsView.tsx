@@ -1297,17 +1297,26 @@ export const SettingsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Batas Jam Masuk Gerbang Pagi (WIB)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-700">
+                      Batas Jam Masuk Gerbang Pagi (WIB)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setAppForm({ ...appForm, default_start_time: '07:00' })}
+                      className="text-[10px] text-emerald-700 hover:text-emerald-900 font-bold underline cursor-pointer"
+                    >
+                      Set Default (07:00 WIB)
+                    </button>
+                  </div>
                   <input
                     type="time"
                     step="1"
-                    value={appForm.default_start_time}
+                    value={appForm.default_start_time || '07:00'}
                     onChange={(e) => setAppForm({ ...appForm, default_start_time: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-mono font-bold focus:ring-1 focus:ring-emerald-500 outline-none"
                   />
-                  <span className="text-[10px] text-slate-500">Kedatangan siswa setelah jam ini otomatis dihitung terlambat.</span>
+                  <span className="text-[10px] text-slate-500">Standar default resmi: 07:00 WIB. Kedatangan siswa setelah jam ini otomatis dihitung terlambat.</span>
                 </div>
 
                 <div>
