@@ -205,10 +205,31 @@ function doPost(e) {
 
     // 3. Catat Keterlambatan Baru (Append ke Keterlambatan)
     if (action === 'insertRecord') {
-      var record = payload.record;
+      var record = payload.record || {};
+      // Pastikan kolom late_duration_minutes selalu terhitung dan tercatat sebagai angka positif
+      var lateMins = parseInt(record.late_duration_minutes, 10);
+      if (isNaN(lateMins) || lateMins <= 0) {
+        lateMins = calculateLateMinutesGAS(record.arrival_time, record.scheduled_time);
+      }
+      record.late_duration_minutes = (lateMins > 0) ? lateMins : 1;
+
       var sheet = getOrCreateSheet(ss, SHEETS.KETERLAMBATAN, SHEET_HEADERS['Keterlambatan']);
       appendRowFromObject(sheet, SHEET_HEADERS['Keterlambatan'], record);
-      return jsonResponse({ status: 'success', message: 'Catatan keterlambatan berhasil ditambahkan ke Google Sheets' });
+      return jsonResponse({ 
+        status: 'success', 
+        message: 'Catatan keterlambatan berhasil ditambahkan ke Google Sheets',
+        late_duration_minutes: record.late_duration_minutes
+      });
+    }
+
+    // Aksi Perbaikan Otomatis: Hitung Ulang & Rekam Semua late_duration_minutes di Google Spreadsheet
+    if (action === 'recalculateLateDurations') {
+      var fixedCount = recalculateAllLateDurations(ss);
+      return jsonResponse({
+        status: 'success',
+        message: 'Pemeriksaan selesai. Berhasil menghitung & merekam ' + fixedCount + ' data durasi keterlambatan di Google Spreadsheet!',
+        details: { fixedCount: fixedCount }
+      });
     }
 
     // 4. Update Status Verifikasi / Pembatalan Keterlambatan
@@ -319,6 +340,11 @@ function formatHeaderRow(sheet, headers) {
   for (var i = 1; i <= headers.length; i++) {
     sheet.autoResizeColumn(i);
   }
+  // Format kolom late_duration_minutes khusus sebagai NUMBER
+  var lateIdx = headers.indexOf('late_duration_minutes');
+  if (lateIdx !== -1 && sheet.getMaxRows() > 1) {
+    sheet.getRange(2, lateIdx + 1, sheet.getMaxRows() - 1, 1).setNumberFormat('0');
+  }
 }
 
 function readSheetData(ss, sheetName) {
@@ -366,6 +392,15 @@ function readSheetData(ss, sheetName) {
         } else {
           rowObj[key] = cellVal;
         }
+      } else if (key === 'late_duration_minutes') {
+        // Pastikan late_duration_minutes terbaca sebagai integer numerik
+        var numLate = parseInt(cellVal, 10);
+        if (isNaN(numLate) || numLate <= 0) {
+          var arrV = rowObj['arrival_time'] || (headers.indexOf('arrival_time') !== -1 ? values[i][headers.indexOf('arrival_time')] : '07:15');
+          var schV = rowObj['scheduled_time'] || (headers.indexOf('scheduled_time') !== -1 ? values[i][headers.indexOf('scheduled_time')] : '07:00');
+          numLate = calculateLateMinutesGAS(arrV, schV);
+        }
+        rowObj[key] = (numLate > 0) ? numLate : 1;
       } else {
         rowObj[key] = cellVal;
       }
@@ -392,7 +427,13 @@ function overwriteSheet(ss, sheetName, headers, dataArray) {
     for (var h = 0; h < headers.length; h++) {
       var field = headers[h];
       var val = item[field];
-      if (val === undefined || val === null) {
+      if (field === 'late_duration_minutes') {
+        var pLate = parseInt(val, 10);
+        if (isNaN(pLate) || pLate <= 0) {
+          pLate = calculateLateMinutesGAS(item.arrival_time, item.scheduled_time);
+        }
+        row.push(pLate > 0 ? pLate : 1);
+      } else if (val === undefined || val === null) {
         row.push('');
       } else if (typeof val === 'object') {
         row.push(JSON.stringify(val));
@@ -405,6 +446,10 @@ function overwriteSheet(ss, sheetName, headers, dataArray) {
 
   if (rowsToInsert.length > 0) {
     sheet.getRange(2, 1, rowsToInsert.length, headers.length).setValues(rowsToInsert);
+    var lateIdx = headers.indexOf('late_duration_minutes');
+    if (lateIdx !== -1) {
+      sheet.getRange(2, lateIdx + 1, rowsToInsert.length, 1).setNumberFormat('0');
+    }
   }
   return rowsToInsert.length;
 }
@@ -492,6 +537,66 @@ function initializeAllSheets(ss, seedData) {
     if (seedData.settings) overwriteSheet(ss, SHEETS.PENGATURAN, SHEET_HEADERS['Pengaturan'], seedData.settings);
   }
   return summary;
+}
+
+function calculateLateMinutesGAS(arrivalTime, scheduledTime) {
+  try {
+    var parseToMinutes = function(t, defaultMins) {
+      if (!t) return defaultMins;
+      if (t instanceof Date) {
+        return t.getHours() * 60 + t.getMinutes();
+      }
+      var s = String(t).trim();
+      var m = s.match(/(\d{1,2}):(\d{1,2})/);
+      if (m) {
+        return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      }
+      return defaultMins;
+    };
+    var arrMins = parseToMinutes(arrivalTime, 435); // default 07:15
+    var schMins = parseToMinutes(scheduledTime, 420); // default 07:00
+    var diff = arrMins - schMins;
+    return diff > 0 ? Math.round(diff) : 1;
+  } catch (e) {
+    return 1;
+  }
+}
+
+function recalculateAllLateDurations(ss) {
+  var sheet = ss.getSheetByName(SHEETS.KETERLAMBATAN);
+  if (!sheet) return 0;
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow <= 1 || lastCol === 0) return 0;
+
+  var range = sheet.getRange(1, 1, lastRow, lastCol);
+  var values = range.getValues();
+  var headers = values[0];
+  var lateIndex = headers.indexOf('late_duration_minutes');
+  var arrIndex = headers.indexOf('arrival_time');
+  var schIndex = headers.indexOf('scheduled_time');
+
+  if (lateIndex === -1) return 0;
+  var fixedCount = 0;
+
+  for (var i = 1; i < values.length; i++) {
+    var curLate = parseInt(values[i][lateIndex], 10);
+    if (isNaN(curLate) || curLate <= 0) {
+      var arrVal = (arrIndex !== -1) ? values[i][arrIndex] : '07:15';
+      var schVal = (schIndex !== -1) ? values[i][schIndex] : '07:00';
+      var calculated = calculateLateMinutesGAS(arrVal, schVal);
+      values[i][lateIndex] = calculated;
+      fixedCount++;
+    } else {
+      values[i][lateIndex] = curLate;
+    }
+  }
+
+  if (values.length > 1) {
+    range.setValues(values);
+    sheet.getRange(2, lateIndex + 1, lastRow - 1, 1).setNumberFormat('0');
+  }
+  return fixedCount;
 }
 `;
 

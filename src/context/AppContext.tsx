@@ -12,11 +12,11 @@ import {
 import { 
   getGasConfig, setGasUrl, clearGasUrl, pingGoogleSheets, 
   fetchAllFromGoogleSheets, postToGoogleSheets, initGoogleSheetsStructure, 
-  syncAllDataToGoogleSheetsBackend, STORAGE_KEY_AUTO_SYNC_ENABLED, 
-  STORAGE_KEY_AUTO_SYNC_INTERVAL, normalizeGasUrl, OFFICIAL_SMESA_GAS_URL,
-  resetToOfficialGasUrl
+  syncAllDataToGoogleSheetsBackend, recalculateGoogleSheetsLateDurations,
+  STORAGE_KEY_AUTO_SYNC_ENABLED, STORAGE_KEY_AUTO_SYNC_INTERVAL, 
+  normalizeGasUrl, OFFICIAL_SMESA_GAS_URL, resetToOfficialGasUrl
 } from '../lib/googleSheetsClient';
-import { normalizeDateString } from '../utils/dateUtils';
+import { normalizeDateString, calculateLateDurationMinutes } from '../utils/dateUtils';
 
 interface AppContextType {
   // Auth & RBAC
@@ -58,6 +58,8 @@ interface AppContextType {
     reasonId: string;
     notes?: string;
     allowDuplicateOverride?: boolean;
+    lateDurationMinutes?: number;
+    scheduledTime?: string;
   }) => Promise<{ success: boolean; message: string; record?: LatenessRecord; isDuplicate?: boolean }>;
   
   verifyRecord: (id: string, status: 'terverifikasi' | 'ditolak') => Promise<void>;
@@ -92,6 +94,7 @@ interface AppContextType {
   syncStatusMessage: string | null;
   refreshData: () => Promise<void>;
   syncAllDataToGoogleSheets: () => Promise<{ success: boolean; message: string; details?: Record<string, number> }>;
+  repairGoogleSheetsLateDurations: () => Promise<{ success: boolean; message: string; fixedCount?: number }>;
   initGoogleSheets: () => Promise<{ success: boolean; message: string; details?: any }>;
   saveGasUrl: (url: string) => Promise<{ success: boolean; message: string; latencyMs?: number }>;
   clearGasUrlConfig: () => void;
@@ -315,10 +318,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 const cleanArr = rawArr.length > 8 && rawArr.includes(':')
                   ? rawArr.substring(rawArr.indexOf(':') - 2, rawArr.indexOf(':') + 3)
                   : (rawArr.length >= 5 ? rawArr.substring(0, 5) : rawArr);
+                const rawSched = r.scheduled_time ? String(r.scheduled_time).trim() : '07:00:00';
+                const cleanSched = rawSched.length >= 5 ? rawSched.substring(0, 8) : '07:00:00';
+
+                const parsedLate = Number(r.late_duration_minutes);
+                const safeLate = (!isNaN(parsedLate) && parsedLate > 0)
+                  ? Math.round(parsedLate)
+                  : calculateLateDurationMinutes(cleanArr, cleanSched);
+
                 map.set(String(r.id), {
                   ...r,
                   event_date: cleanDate,
                   arrival_time: cleanArr,
+                  scheduled_time: cleanSched,
+                  late_duration_minutes: safeLate,
                 } as LatenessRecord);
               }
             });
@@ -555,10 +568,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setIsSyncing(true);
-    setSyncStatusMessage('Mengunggah seluruh data ke Google Spreadsheet...');
+    const sanitizedRecords = records.map(r => {
+      const parsedLate = Number(r.late_duration_minutes);
+      const safeLate = (!isNaN(parsedLate) && parsedLate > 0)
+        ? Math.round(parsedLate)
+        : calculateLateDurationMinutes(r.arrival_time, r.scheduled_time || '07:00:00');
+      return {
+        ...r,
+        late_duration_minutes: safeLate,
+      };
+    });
 
     const payload = {
-      records,
+      records: sanitizedRecords,
       students,
       classes,
       departments,
@@ -592,6 +614,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setSyncStatusMessage('Seluruh data berhasil disinkronkan ke Google Spreadsheet.');
     }
     return res;
+  };
+
+  // Periksa & Perbaiki Kolom late_duration_minutes di Google Sheets
+  const repairGoogleSheetsLateDurations = async (): Promise<{ success: boolean; message: string; fixedCount?: number }> => {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) {
+      return { success: false, message: 'URL Google Apps Script belum dikonfigurasi.' };
+    }
+
+    setIsSyncing(true);
+    setSyncStatusMessage('Memeriksa & menghitung ulang durasi menit keterlambatan di Google Spreadsheet...');
+
+    try {
+      const res = await recalculateGoogleSheetsLateDurations(url);
+      if (res.success) {
+        await refreshData();
+        setIsSyncing(false);
+        return {
+          success: true,
+          message: res.message || 'Semua baris keterlambatan di Google Spreadsheet berhasil diperiksa & durasi menitnya dihitung!',
+          fixedCount: res.details?.fixedCount,
+        };
+      }
+      // Fallback jika action belum terdeploy di GAS: push seluruh records yang sudah dinormalisasi
+      const syncRes = await syncAllDataToGoogleSheets();
+      setIsSyncing(false);
+      return {
+        success: syncRes.success,
+        message: syncRes.success
+          ? 'Durasi menit keterlambatan berhasil dihitung ulang dan disimpan rapi ke Google Spreadsheet.'
+          : (res.message || 'Gagal memperbaiki database Google Sheets.'),
+      };
+    } catch (err: any) {
+      setIsSyncing(false);
+      return { success: false, message: err?.message || 'Gagal menghubungi Google Apps Script' };
+    }
   };
 
   // Role Switcher & Database Login
@@ -738,6 +796,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     reasonId: string;
     notes?: string;
     allowDuplicateOverride?: boolean;
+    lateDurationMinutes?: number;
+    scheduledTime?: string;
   }): Promise<{ success: boolean; message: string; record?: LatenessRecord; isDuplicate?: boolean }> => {
     const student = students.find(s => s.id === data.studentId);
     if (!student) {
@@ -762,15 +822,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    const scheduledTime = settings.default_start_time || '07:00:00';
-    const [arrH, arrM] = data.arrivalTime.split(':').map(Number);
-    const [schH, schM] = scheduledTime.split(':').map(Number);
-    const diffMinutes = Math.max(1, (arrH * 60 + arrM) - (schH * 60 + schM));
-
     const [y, m, d] = cleanEventDate.split('-').map(Number);
     const dateObj = new Date(y, m - 1, d);
+    const dayOfWeek = isNaN(dateObj.getDay()) ? 1 : dateObj.getDay();
     const days = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const dayName = days[dateObj.getDay()] || 'Senin';
+    const dayName = days[dayOfWeek] || 'Senin';
+
+    // Gunakan jadwal hari aktif jika ada, atau fallback ke default_start_time
+    const activeSchedule = schedules.find(s => s.day_of_week === dayOfWeek && s.is_active);
+    const rawScheduled = data.scheduledTime || (activeSchedule ? activeSchedule.start_time : (settings.default_start_time || '07:00:00'));
+    const scheduledTime = rawScheduled.length === 5 ? `${rawScheduled}:00` : rawScheduled;
+
+    // Perhitungan pasti durasi keterlambatan (tidak boleh NaN atau 0)
+    let diffMinutes = 0;
+    if (typeof data.lateDurationMinutes === 'number' && !isNaN(data.lateDurationMinutes) && data.lateDurationMinutes > 0) {
+      diffMinutes = Math.round(data.lateDurationMinutes);
+    } else {
+      diffMinutes = calculateLateDurationMinutes(data.arrivalTime, scheduledTime);
+    }
+    if (isNaN(diffMinutes) || diffMinutes <= 0) {
+      diffMinutes = 1;
+    }
 
     const newRecordId = 'rec-' + Date.now();
     const newRecord: LatenessRecord = {
@@ -1287,6 +1359,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         syncStatusMessage,
         refreshData,
         syncAllDataToGoogleSheets,
+        repairGoogleSheetsLateDurations,
         initGoogleSheets,
         saveGasUrl,
         clearGasUrlConfig,

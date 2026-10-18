@@ -15,7 +15,7 @@ export const SettingsView: React.FC = () => {
   const { 
     settings, updateSettings, isGoogleSheetsConnected, 
     gasUrl, saveGasUrl, clearGasUrlConfig, resetToDemoData, 
-    syncAllDataToGoogleSheets, initGoogleSheets, refreshData,
+    syncAllDataToGoogleSheets, repairGoogleSheetsLateDurations, initGoogleSheets, refreshData,
     isSyncing, lastSyncedAt, isAutoSyncEnabled, toggleAutoSync,
     autoSyncIntervalSec, setAutoSyncInterval,
     records, students, classes, departments, reasons, users, coachings,
@@ -189,6 +189,27 @@ export const SettingsView: React.FC = () => {
     });
     if (res.success) {
       alert('Seluruh data berhasil disinkronkan ke Google Spreadsheet!');
+    }
+  };
+
+  const [isRepairingLate, setIsRepairingLate] = useState(false);
+  const handleRepairLateDurations = async () => {
+    if (!isGoogleSheetsConnected) {
+      alert('Google Sheets belum terhubung. Harap simpan URL Apps Script yang valid terlebih dahulu.');
+      return;
+    }
+    setIsRepairingLate(true);
+    try {
+      const res = await repairGoogleSheetsLateDurations();
+      if (res.success) {
+        alert(`Perbaikan Database Berhasil!\n\n${res.message}\nSeluruh durasi menit keterlambatan (kolom late_duration_minutes) telah terhitung otomatis dan terekam dengan baik pada tabel database Google Sheets.`);
+      } else {
+        alert(`Gagal memeriksa database: ${res.message}`);
+      }
+    } catch (err: any) {
+      alert(`Error perbaikan: ${err?.message || err}`);
+    } finally {
+      setIsRepairingLate(false);
     }
   };
 
@@ -505,6 +526,17 @@ export const SettingsView: React.FC = () => {
                     <UploadCloud className="w-3.5 h-3.5" />
                     <span>Upload & Sinkronkan Seluruh Data Sekarang</span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRepairLateDurations}
+                    disabled={!isGoogleSheetsConnected || isSyncing || isRepairingLate}
+                    className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                    title="Periksa seluruh baris tabel Keterlambatan di Google Sheets dan hitung otomatis kolom late_duration_minutes yang masih kosong"
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${isRepairingLate ? 'animate-spin' : ''}`} />
+                    <span>{isRepairingLate ? 'Memeriksa & Menghitung...' : 'Hitung Ulang & Rekam Menit Keterlambatan (Database)'}</span>
+                  </button>
                 </div>
 
                 {isGoogleSheetsConnected && (
@@ -518,6 +550,42 @@ export const SettingsView: React.FC = () => {
                 )}
               </div>
             </form>
+          </div>
+
+          {/* Info Card: Rekam Kolom late_duration_minutes ke Database */}
+          <div className="bg-gradient-to-br from-indigo-50/90 to-blue-50/90 rounded-2xl p-5 border border-indigo-200 shadow-xs">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div className="space-y-1.5 flex-1">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h4 className="text-sm font-bold text-indigo-950 flex items-center gap-2">
+                    Sistem Penghitungan Otomatis & Perekaman Database (<code className="text-xs bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded-md font-mono">late_duration_minutes</code>)
+                  </h4>
+                  <span className="text-[11px] font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full border border-emerald-200">
+                    Auto-Computed & Verified
+                  </span>
+                </div>
+                <p className="text-xs text-indigo-900/80 leading-relaxed">
+                  Durasi keterlambatan dihitung otomatis dari rumus: <strong>Waktu Kedatangan Siswa (WIB) - Batas Jam Masuk Sekolah</strong>. Pada Google Spreadsheet, nilai ini direkam pada kolom ke-12 tabel <code className="font-mono bg-white/70 px-1 py-0.5 rounded text-indigo-900">Keterlambatan</code> bertipe data <strong>NUMBER (bilangan bulat)</strong>.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 text-[11px]">
+                  <div className="bg-white/80 rounded-xl p-2.5 border border-indigo-100">
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">1. Saat Input Gerbang</span>
+                    <span className="font-semibold text-slate-800">Dihitung otomatis realtime & langsung dikirim ke Sheets sebagai angka bulat</span>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-2.5 border border-indigo-100">
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">2. Penyesuaian Hari</span>
+                    <span className="font-semibold text-slate-800">Menyesuaikan jam masuk khusus hari (cth: Jumat vs Senin-Kamis)</span>
+                  </div>
+                  <div className="bg-white/80 rounded-xl p-2.5 border border-indigo-100">
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">3. Database Fallback</span>
+                    <span className="font-semibold text-slate-800">Apps Script & UI menjamin tidak ada nilai kosong / NaN di spreadsheet</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Realtime Engine Controls */}

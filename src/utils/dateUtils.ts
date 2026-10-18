@@ -147,3 +147,31 @@ export const isDateThisMonth = (dateString: string | undefined | null): boolean 
   return cleanDateStr.substring(0, 7) === todayStr.substring(0, 7);
 };
 
+/**
+ * Menghitung selisih durasi keterlambatan dalam menit secara akurat dan konsisten.
+ * Menerima variasi string waktu (misal: "07:25", "07:25:00", "7:25", format ISO Google Sheets).
+ * Selalu mengembalikan bilangan bulat positif (minimal 1 menit jika terlambat).
+ */
+export const calculateLateDurationMinutes = (
+  arrivalTime: string | undefined | null,
+  scheduledTime: string | undefined | null = '07:00:00'
+): number => {
+  const parseToMinutes = (t: string | undefined | null, fallbackMinutes: number): number => {
+    if (!t) return fallbackMinutes;
+    const str = String(t).trim();
+    // Jika format ISO lengkap, ambil bagian jam:menit
+    const timePart = str.includes('T') ? (str.split('T')[1] || str) : str;
+    const match = timePart.match(/(\d{1,2}):(\d{1,2})/);
+    if (!match) return fallbackMinutes;
+    const h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    if (isNaN(h) || isNaN(m)) return fallbackMinutes;
+    return h * 60 + m;
+  };
+
+  const arrMins = parseToMinutes(arrivalTime, 435); // Default jika kosong 07:15
+  const schMins = parseToMinutes(scheduledTime, 420); // Default jika kosong 07:00
+  const diff = arrMins - schMins;
+  return diff > 0 ? Math.round(diff) : 1;
+};
+

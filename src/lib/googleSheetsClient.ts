@@ -255,3 +255,11 @@ export const initGoogleSheetsStructure = async (seedData?: any, customUrl?: stri
 export const syncAllDataToGoogleSheetsBackend = async (data: any, customUrl?: string) => {
   return postToGoogleSheets('syncAll', { data }, customUrl);
 };
+
+/**
+ * Meminta Google Apps Script memeriksa dan menghitung ulang seluruh kolom late_duration_minutes
+ * yang masih kosong atau belum terhitung di Google Spreadsheet
+ */
+export const recalculateGoogleSheetsLateDurations = async (customUrl?: string) => {
+  return postToGoogleSheets('recalculateLateDurations', {}, customUrl);
+};

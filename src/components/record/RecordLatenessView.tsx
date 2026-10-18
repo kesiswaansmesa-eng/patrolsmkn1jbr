@@ -173,6 +173,8 @@ export const RecordLatenessView: React.FC = () => {
       reasonId: selectedReasonId,
       notes,
       allowDuplicateOverride,
+      lateDurationMinutes: liveDiffMinutes > 0 ? liveDiffMinutes : undefined,
+      scheduledTime: schedule.start_time,
     });
 
     setIsSubmitting(false);
