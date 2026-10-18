@@ -13,6 +13,7 @@ import {
   getGasConfig, setGasUrl, clearGasUrl, pingGoogleSheets, 
   fetchAllFromGoogleSheets, postToGoogleSheets, initGoogleSheetsStructure, 
   syncAllDataToGoogleSheetsBackend, recalculateGoogleSheetsLateDurations,
+  resetGoogleSheetsRecords,
   STORAGE_KEY_AUTO_SYNC_ENABLED, STORAGE_KEY_AUTO_SYNC_INTERVAL, 
   normalizeGasUrl, OFFICIAL_SMESA_GAS_URL, resetToOfficialGasUrl
 } from '../lib/googleSheetsClient';
@@ -95,6 +96,7 @@ interface AppContextType {
   refreshData: () => Promise<void>;
   syncAllDataToGoogleSheets: () => Promise<{ success: boolean; message: string; details?: Record<string, number> }>;
   repairGoogleSheetsLateDurations: () => Promise<{ success: boolean; message: string; fixedCount?: number }>;
+  resetAllLatenessRecords: () => Promise<{ success: boolean; message: string; count: number }>;
   initGoogleSheets: () => Promise<{ success: boolean; message: string; details?: any }>;
   saveGasUrl: (url: string) => Promise<{ success: boolean; message: string; latencyMs?: number }>;
   clearGasUrlConfig: () => void;
@@ -650,6 +652,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsSyncing(false);
       return { success: false, message: err?.message || 'Gagal menghubungi Google Apps Script' };
     }
+  };
+
+  // Reset Seluruh Data Keterlambatan (Khusus Administrator)
+  const resetAllLatenessRecords = async (): Promise<{ success: boolean; message: string; count: number }> => {
+    if (currentUser.role !== 'admin') {
+      return { success: false, message: 'Hanya akun Administrator yang memiliki hak akses mereset data keterlambatan.', count: 0 };
+    }
+
+    const countBefore = records.length;
+    setIsSyncing(true);
+    setSyncStatusMessage('Mereset seluruh data keterlambatan di sistem...');
+
+    // 1. Kosongkan state lokal
+    setRecords([]);
+
+    // 2. Kosongkan penyimpanan lokal (LocalStorage)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(STORAGE_KEYS.RECORDS, '[]');
+      } catch {}
+    }
+
+    // 3. Broadcast realtime event lintas tab
+    if (broadcastChannel) {
+      try {
+        broadcastChannel.postMessage({ type: 'RECORDS_RESET', timestamp: Date.now() });
+      } catch {}
+    }
+
+    // 4. Jika Google Sheets terhubung, panggil aksi resetRecords
+    let sheetsNote = '';
+    const { url, isConfigured } = getGasConfig();
+    if (isConfigured && url) {
+      try {
+        const res = await resetGoogleSheetsRecords(url);
+        if (res.success) {
+          const cleared = res.details?.clearedCount ?? countBefore;
+          sheetsNote = ` dan ${cleared} baris data pada Google Spreadsheet berhasil dikosongkan.`;
+          setLastSyncedAt(new Date());
+        } else {
+          // Fallback: sync ulang dengan records kosong
+          await syncAllDataToGoogleSheets();
+          sheetsNote = ' dan disinkronkan ke Google Spreadsheet.';
+        }
+      } catch {
+        sheetsNote = ' (Catatan: Google Sheets offline, data lokal berhasil dikosongkan).';
+      }
+    }
+
+    setIsSyncing(false);
+    logAudit('DELETE', 'KETERLAMBATAN', `Administrator ${currentUser.full_name} mereset seluruh data keterlambatan (${countBefore} catatan).`, 'ALL_RECORDS');
+
+    return {
+      success: true,
+      message: `Berhasil mereset ${countBefore} data keterlambatan di sistem${sheetsNote}`,
+      count: countBefore,
+    };
   };
 
   // Role Switcher & Database Login
@@ -1360,6 +1419,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         refreshData,
         syncAllDataToGoogleSheets,
         repairGoogleSheetsLateDurations,
+        resetAllLatenessRecords,
         initGoogleSheets,
         saveGasUrl,
         clearGasUrlConfig,

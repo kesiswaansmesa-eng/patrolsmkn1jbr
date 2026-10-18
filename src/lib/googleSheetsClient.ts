@@ -263,3 +263,11 @@ export const syncAllDataToGoogleSheetsBackend = async (data: any, customUrl?: st
 export const recalculateGoogleSheetsLateDurations = async (customUrl?: string) => {
   return postToGoogleSheets('recalculateLateDurations', {}, customUrl);
 };
+
+/**
+ * Meminta Google Apps Script mengosongkan seluruh baris data keterlambatan di lembar Keterlambatan
+ * (Baris header tetap utuh)
+ */
+export const resetGoogleSheetsRecords = async (customUrl?: string) => {
+  return postToGoogleSheets('resetRecords', {}, customUrl);
+};

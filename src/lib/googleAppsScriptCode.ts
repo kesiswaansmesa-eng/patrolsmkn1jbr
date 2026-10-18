@@ -232,6 +232,23 @@ function doPost(e) {
       });
     }
 
+    // Aksi Reset Data Keterlambatan (Khusus Administrator - Pembukaan Buku / Semester Baru)
+    if (action === 'resetRecords') {
+      var sheet = getOrCreateSheet(ss, SHEETS.KETERLAMBATAN, SHEET_HEADERS['Keterlambatan']);
+      var lastRow = sheet.getLastRow();
+      var clearedCount = 0;
+      if (lastRow > 1) {
+        clearedCount = lastRow - 1;
+        sheet.deleteRows(2, lastRow - 1);
+      }
+      return jsonResponse({
+        status: 'success',
+        message: 'Seluruh data keterlambatan (' + clearedCount + ' baris) di Google Spreadsheet berhasil dikosongkan!',
+        details: { clearedCount: clearedCount },
+        resetAt: new Date().toISOString()
+      });
+    }
+
     // 4. Update Status Verifikasi / Pembatalan Keterlambatan
     if (action === 'updateRecord') {
       var updated = payload.record;
