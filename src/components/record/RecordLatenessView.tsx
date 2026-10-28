@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
-  Clock, Search, AlertTriangle, CheckCircle2, User, 
+  Clock, AlertTriangle, CheckCircle2, User, 
   Sparkles, Save, RotateCcw, AlertCircle, ArrowRight, ShieldCheck, Flame,
   Filter, School, Users, X, ChevronDown, Calendar
 } from 'lucide-react';
@@ -13,9 +13,7 @@ export const RecordLatenessView: React.FC = () => {
   const { students, reasons, recordLateness, schedules, settings, records, currentUser, classes } = useApp();
 
   // Form States
-  const [searchQuery, setSearchQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [eventDate, setEventDate] = useState(getWIBTodayString());
   const [arrivalTime, setArrivalTime] = useState(getWIBCurrentTime());
   const [selectedReasonId, setSelectedReasonId] = useState(reasons[0]?.id || '');
@@ -42,8 +40,6 @@ export const RecordLatenessView: React.FC = () => {
 
   // Error Feedback
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-update current arrival time and date
   const handleSetCurrentTime = () => {
@@ -75,56 +71,26 @@ export const RecordLatenessView: React.FC = () => {
     return sortedClasses.filter(c => c.grade_level === gradeFilter);
   }, [sortedClasses, gradeFilter]);
 
-  // Students in selected class (or all students if no class filter)
+  // Students in selected class (or all students if no class filter), sorted alphabetically
   const classStudents = useMemo(() => {
-    if (!selectedClassFilter) return students;
-    return students.filter(s => s.class_name === selectedClassFilter || s.class_id === selectedClassFilter);
+    const list = !selectedClassFilter
+      ? [...students]
+      : students.filter(s => s.class_name === selectedClassFilter || s.class_id === selectedClassFilter);
+    return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
   }, [students, selectedClassFilter]);
-
-  // Student search filtering with class filter support
-  const filteredStudents = useMemo(() => {
-    // If student is already selected and search query matches the formatted name, don't show dropdown
-    if (selectedStudent && searchQuery === `${selectedStudent.full_name} (${selectedStudent.nis}) - ${selectedStudent.class_name}`) {
-      return [];
-    }
-
-    const query = searchQuery.trim().toLowerCase();
-
-    if (query) {
-      return classStudents.filter(s => 
-        s.full_name.toLowerCase().includes(query) ||
-        s.nis.includes(query) ||
-        s.nisn.includes(query) ||
-        s.class_name.toLowerCase().includes(query)
-      ).slice(0, 25);
-    }
-
-    // If query is empty but a specific class is selected and dropdown is open, show students in this class
-    if (selectedClassFilter && searchDropdownOpen) {
-      return classStudents.slice(0, 50);
-    }
-
-    return [];
-  }, [classStudents, searchQuery, selectedStudent, selectedClassFilter, searchDropdownOpen]);
 
   const handleSelectStudent = (student: Student) => {
     setSelectedStudent(student);
-    setSearchQuery(`${student.full_name} (${student.nis}) - ${student.class_name}`);
-    setSearchDropdownOpen(false);
     setErrorMessage(null);
   };
 
   const handleResetForm = () => {
     setSelectedStudent(null);
-    setSearchQuery('');
     setNotes('');
     setErrorMessage(null);
     setSuccessInfo(null);
     setArrivalTime(getWIBCurrentTime());
     setEventDate(getWIBTodayString());
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
   };
 
   // Determine current scheduled time for date - Default 07:00 WIB
@@ -155,7 +121,7 @@ export const RecordLatenessView: React.FC = () => {
 
   const handleSubmit = async (allowDuplicateOverride = false) => {
     if (!selectedStudent) {
-      setErrorMessage('Silakan cari dan pilih siswa terlebih dahulu.');
+      setErrorMessage('Silakan pilih siswa terlebih dahulu.');
       return;
     }
     if (!selectedReasonId) {
@@ -207,12 +173,8 @@ export const RecordLatenessView: React.FC = () => {
 
     // Auto-reset form input untuk mencatat siswa berikutnya tanpa menghapus tanggal yang dipilih
     setSelectedStudent(null);
-    setSearchQuery('');
     setNotes('');
     setArrivalTime(getWIBCurrentTime());
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
 
     // Sound / Visual Celebration
     try {
@@ -317,12 +279,12 @@ export const RecordLatenessView: React.FC = () => {
       {/* Main Input Card */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible p-4 sm:p-7 space-y-5 sm:space-y-6">
         
-        {/* Step 1: Filter Kelas & Pencarian Siswa */}
+        {/* Step 1: Filter Kelas & Pemilihan Siswa Terlambat */}
         <div className="space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
             <label className="text-xs font-extrabold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
               <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[11px] font-black shrink-0">1</span>
-              <span>Cari & Pilih Siswa Terlambat</span>
+              <span>Pilih Siswa Terlambat</span>
               <span className="text-red-500">*</span>
             </label>
 
@@ -386,10 +348,8 @@ export const RecordLatenessView: React.FC = () => {
                     const newClass = e.target.value;
                     setSelectedClassFilter(newClass);
                     if (newClass) {
-                      setSearchDropdownOpen(true);
                       if (selectedStudent && selectedStudent.class_name !== newClass) {
                         setSelectedStudent(null);
-                        setSearchQuery('');
                       }
                     }
                   }}
@@ -434,122 +394,113 @@ export const RecordLatenessView: React.FC = () => {
                   <CheckCircle2 className="w-3.5 h-3.5 text-blue-700 shrink-0" />
                   <span>Menampilkan <strong>{classStudents.length} siswa</strong> di <strong>{selectedClassFilter}</strong></span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchDropdownOpen(true);
-                    if (searchInputRef.current) searchInputRef.current.focus();
-                  }}
-                  className="font-bold underline text-blue-800 hover:text-blue-950 cursor-pointer"
-                >
-                  Buka Daftar Nama
-                </button>
+                <span className="text-slate-500 text-[11px]">Pilih nama siswa di bawah</span>
               </div>
             )}
           </div>
 
-          {/* Kotak Input Pencarian Siswa */}
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Search className="w-5 h-5 shrink-0" />
+          {/* Pemilihan Siswa Terlambat */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                <span>Pilih Nama Siswa:</span>
+              </label>
+              {selectedStudent ? (
+                <span className="text-[11px] font-bold text-emerald-700 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Siswa Terpilih
+                </span>
+              ) : (
+                <span className="text-[11px] text-slate-500">
+                  {selectedClassFilter ? `${classStudents.length} Siswa di ${selectedClassFilter}` : `${students.length} Siswa Terdaftar`}
+                </span>
+              )}
             </div>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setSearchDropdownOpen(true);
-                if (selectedStudent && !e.target.value) {
-                  setSelectedStudent(null);
-                }
-              }}
-              onFocus={() => setSearchDropdownOpen(true)}
-              placeholder={
-                selectedClassFilter
-                  ? `Ketik nama/NIS siswa di kelas ${selectedClassFilter}...`
-                  : "Ketik Nama, NIS, atau Kelas siswa terlambat..."
-              }
-              className="w-full pl-11 pr-20 sm:pr-24 py-3 bg-slate-50 border-2 border-slate-300 focus:border-blue-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 placeholder-slate-400 focus:outline-hidden transition-all shadow-inner"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={handleResetForm}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-xs font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
+
+            {/* Dropdown Pilihan Nama Siswa */}
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <User className="w-4 h-4 text-blue-600 shrink-0" />
+              </div>
+              <select
+                value={selectedStudent?.id || ''}
+                onChange={(e) => {
+                  const studentId = e.target.value;
+                  if (!studentId) {
+                    setSelectedStudent(null);
+                  } else {
+                    const found = students.find(s => s.id === studentId);
+                    if (found) {
+                      handleSelectStudent(found);
+                    }
+                  }
+                }}
+                className={`w-full pl-10 pr-9 py-3 bg-white border-2 rounded-xl text-xs sm:text-sm font-bold text-slate-800 transition-all shadow-xs cursor-pointer truncate ${
+                  selectedStudent 
+                    ? 'border-blue-500 bg-blue-50/40 text-blue-900 ring-2 ring-blue-500/20' 
+                    : 'border-slate-300 hover:border-slate-400 focus:border-blue-600 focus:outline-hidden'
+                }`}
               >
-                Bersihkan
-              </button>
-            )}
-          </div>
+                <option value="">
+                  {selectedClassFilter 
+                    ? `-- Pilih Nama Siswa di ${selectedClassFilter} (${classStudents.length} Siswa) --` 
+                    : `-- Pilih Nama Siswa Terlambat (${students.length} Siswa) --`}
+                </option>
+                {classStudents.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.full_name} | NIS: {student.nis} {selectedClassFilter ? '' : `| ${student.class_name}`}
+                  </option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none text-slate-400">
+                <ChevronDown className="w-4 h-4" />
+              </div>
+            </div>
 
-          {/* Autocomplete Dropdown List Siswa - Mobile Optimized */}
-          {searchDropdownOpen && !selectedStudent && (searchQuery.trim() || selectedClassFilter) && (
-            <div className="relative z-30">
-              <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-300 rounded-xl shadow-2xl max-h-64 sm:max-h-72 overflow-y-auto divide-y divide-slate-100">
-                {/* Header status dropdown */}
-                <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between text-xs text-slate-600 font-semibold sticky top-0 z-10">
-                  <span className="flex items-center gap-1.5 truncate">
-                    <Users className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                    {selectedClassFilter ? (
-                      <span className="truncate">Siswa Kelas <strong className="text-blue-700">{selectedClassFilter}</strong> ({filteredStudents.length})</span>
-                    ) : (
-                      <span>Hasil Pencarian ({filteredStudents.length} siswa)</span>
-                    )}
+            {/* Jika belum memilih siswa & kelas dipilih: Tampilkan Daftar Siswa untuk sentuhan cepat di ponsel */}
+            {!selectedStudent && selectedClassFilter && classStudents.length > 0 && (
+              <div className="mt-2.5 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50 shadow-xs">
+                <div className="p-2.5 bg-slate-100/90 border-b border-slate-200 flex items-center justify-between text-xs text-slate-700 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Daftar Siswa Kelas {selectedClassFilter}</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setSearchDropdownOpen(false)}
-                    className="text-slate-400 hover:text-slate-700 text-xs font-bold p-1 cursor-pointer shrink-0"
-                  >
-                    Tutup ✕
-                  </button>
+                  <span className="text-[10px] sm:text-[11px] text-slate-500 font-medium">Ketuk nama untuk memilih</span>
                 </div>
-
-                {filteredStudents.length > 0 ? (
-                  filteredStudents.map(student => (
+                <div className="max-h-56 sm:max-h-64 overflow-y-auto divide-y divide-slate-100 bg-white">
+                  {classStudents.map((student) => (
                     <button
                       key={student.id}
                       type="button"
                       onClick={() => handleSelectStudent(student)}
-                      className="w-full text-left p-3 hover:bg-blue-50 transition-colors flex items-center justify-between group cursor-pointer"
+                      className="w-full text-left p-2.5 sm:p-3 hover:bg-blue-50 active:bg-blue-100 transition-colors flex items-center justify-between group cursor-pointer"
                     >
                       <div className="min-w-0 pr-2">
-                        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                        <div className="flex items-center gap-2">
                           <span className="font-extrabold text-xs sm:text-sm text-slate-900 group-hover:text-blue-700 truncate">
                             {student.full_name}
                           </span>
-                          <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold shrink-0 ${
                             student.gender === 'L' ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'bg-pink-50 text-pink-700 border border-pink-200'
                           }`}>
                             {student.gender === 'L' ? 'L' : 'P'}
                           </span>
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                          <span>NIS: <strong className="text-slate-800 font-mono">{student.nis}</strong></span>
-                          <span>&bull;</span>
-                          <span className="text-blue-700 font-bold">{student.class_name}</span>
-                          <span>&bull;</span>
-                          <span className="text-slate-600">{student.department_code}</span>
+                        <div className="text-[11px] text-slate-500 mt-0.5">
+                          NIS: <span className="font-mono font-bold text-slate-700">{student.nis}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 text-xs font-bold text-blue-600 shrink-0">
                         <span className="hidden sm:inline">Pilih</span>
-                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                        <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
                       </div>
                     </button>
-                  ))
-                ) : (
-                  <div className="p-5 text-center text-xs text-slate-500">
-                    <AlertCircle className="w-5 h-5 text-amber-500 mx-auto mb-1.5" />
-                    Tidak ada siswa ditemukan
-                    {selectedClassFilter ? ` di kelas "${selectedClassFilter}"` : ''}
-                    {searchQuery ? ` dengan kata kunci "${searchQuery}"` : ''}.
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         {/* Selected Student Card Information - Responsive for Mobile & Desktop */}
@@ -599,8 +550,6 @@ export const RecordLatenessView: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setSelectedStudent(null);
-                  setSearchQuery('');
-                  if (searchInputRef.current) searchInputRef.current.focus();
                 }}
                 className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
                 title="Pilih siswa lain"
