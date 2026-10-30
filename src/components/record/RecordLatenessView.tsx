@@ -71,12 +71,27 @@ export const RecordLatenessView: React.FC = () => {
     return sortedClasses.filter(c => c.grade_level === gradeFilter);
   }, [sortedClasses, gradeFilter]);
 
+  // Pre-calculate student count per class in O(N) for maximum performance with 2,000+ students
+  const classStudentCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < students.length; i++) {
+      const s = students[i];
+      if (s.class_name) {
+        map.set(s.class_name, (map.get(s.class_name) || 0) + 1);
+      }
+      if (s.class_id) {
+        map.set(s.class_id, (map.get(s.class_id) || 0) + 1);
+      }
+    }
+    return map;
+  }, [students]);
+
   // Students in selected class (or all students if no class filter), sorted alphabetically
   const classStudents = useMemo(() => {
     const list = !selectedClassFilter
       ? [...students]
       : students.filter(s => s.class_name === selectedClassFilter || s.class_id === selectedClassFilter);
-    return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
+    return list.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
   }, [students, selectedClassFilter]);
 
   const handleSelectStudent = (student: Student) => {
@@ -361,7 +376,7 @@ export const RecordLatenessView: React.FC = () => {
                 >
                   <option value="">-- Semua Kelas ({classes.length} Rombel) --</option>
                   {displayedClasses.map((cls) => {
-                    const studentCount = students.filter(s => s.class_name === cls.name || s.class_id === cls.id).length;
+                    const studentCount = classStudentCounts.get(cls.name) || classStudentCounts.get(cls.id) || 0;
                     return (
                       <option key={cls.id} value={cls.name}>
                         {cls.name} &bull; {cls.department_code} ({studentCount} Siswa)

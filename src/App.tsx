@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { AppProvider, useApp } from './context/AppContext';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { LoginView } from './components/auth/LoginView';
@@ -145,7 +146,9 @@ const MainAppContent: React.FC = () => {
 
         {/* Dynamic View Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8">
-          {renderCurrentView()}
+          <ErrorBoundary fallbackTitle="Halaman Ini Mengalami Kendala Tampilan">
+            {renderCurrentView()}
+          </ErrorBoundary>
         </main>
       </div>
     </div>
@@ -154,8 +157,10 @@ const MainAppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainAppContent />
-    </AppProvider>
+    <ErrorBoundary fallbackTitle="PATROL SMESA Sedang Dipulihkan">
+      <AppProvider>
+        <MainAppContent />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

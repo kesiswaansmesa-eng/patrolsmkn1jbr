@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users, Plus, Search, Filter, Download, Upload, 
-  Trash2, Edit3, CheckCircle, AlertTriangle, FileSpreadsheet, X 
+  Trash2, Edit3, CheckCircle, AlertTriangle, FileSpreadsheet, X,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Loader2
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Student } from '../../types';
@@ -16,6 +17,11 @@ export const StudentsView: React.FC = () => {
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState('');
   const [filterDept, setFilterDept] = useState('');
+
+  // Pagination for high capacity (2,000+ students)
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(50); // 25, 50, 100, 200, or -1 (Semua)
+  const [isImporting, setIsImporting] = useState(false);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
@@ -35,16 +41,37 @@ export const StudentsView: React.FC = () => {
     status: 'active' as Student['status'],
   });
 
+  // Defensive Filtered Students (Prevents TypeError: Cannot read properties of undefined)
   const filteredStudents = useMemo(() => {
+    if (!Array.isArray(scopedStudents)) return [];
+    const q = (search || '').trim().toLowerCase();
+
     return scopedStudents.filter(s => {
-      const q = search.toLowerCase();
-      const matchSearch = s.full_name.toLowerCase().includes(q) || s.nis.includes(q) || s.nisn.includes(q);
+      if (!s) return false;
+      const fullName = String(s.full_name || '').toLowerCase();
+      const nis = String(s.nis || '').toLowerCase();
+      const nisn = String(s.nisn || '').toLowerCase();
+
+      const matchSearch = !q || fullName.includes(q) || nis.includes(q) || nisn.includes(q);
       if (!matchSearch) return false;
       if (filterClass && s.class_name !== filterClass) return false;
       if (filterDept && s.department_code !== filterDept) return false;
       return true;
     });
   }, [scopedStudents, search, filterClass, filterDept]);
+
+  // Reset page when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterClass, filterDept, pageSize]);
+
+  // Computed Pagination Slice
+  const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredStudents.length / pageSize));
+  const paginatedStudents = useMemo(() => {
+    if (pageSize === -1) return filteredStudents;
+    const start = (currentPage - 1) * pageSize;
+    return filteredStudents.slice(start, start + pageSize);
+  }, [filteredStudents, currentPage, pageSize]);
 
   const handleOpenAdd = () => {
     setEditingStudent(null);
@@ -117,73 +144,110 @@ export const StudentsView: React.FC = () => {
     }
   };
 
-  // CSV File Handler
+  // CSV File Handler (Mendukung pemrosesan data besar > 2.000 baris dengan pemisah koma / titik koma)
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const text = event.target?.result as string;
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length < 2) {
-        alert('File CSV kosong atau format tidak sesuai.');
-        return;
-      }
-
-      const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
-      const parsed: any[] = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim().replace(/^["']|["']$/g, ''));
-        if (values.length >= 3) {
-          const rowObj: any = {};
-          headers.forEach((h, idx) => {
-            rowObj[h] = values[idx] || '';
-          });
-          parsed.push(rowObj);
+      try {
+        const text = (event.target?.result as string) || '';
+        const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+          alert('File CSV kosong atau format header tidak ditemukan.');
+          return;
         }
-      }
 
-      setImportPreview(parsed);
-      setShowImportModal(true);
+        // Deteksi pemisah koma (,) atau titik-koma (;)
+        const headerLine = lines[0];
+        const delimiter = headerLine.includes(';') && !headerLine.includes(',') ? ';' : ',';
+
+        const headers = headerLine.split(delimiter).map(h => h.trim().replace(/^["']|["']$/g, '').toLowerCase());
+        const parsed: any[] = [];
+
+        for (let i = 1; i < lines.length; i++) {
+          const rawRow = lines[i];
+          if (!rawRow) continue;
+          const values = rawRow.split(delimiter).map(v => v.trim().replace(/^["']|["']$/g, ''));
+          if (values.length >= 2) {
+            const rowObj: any = {};
+            headers.forEach((h, idx) => {
+              rowObj[h] = values[idx] !== undefined ? values[idx] : '';
+            });
+            parsed.push(rowObj);
+          }
+        }
+
+        if (parsed.length === 0) {
+          alert('Tidak ada baris data siswa yang valid dalam file CSV.');
+          return;
+        }
+
+        setImportPreview(parsed);
+        setShowImportModal(true);
+      } catch (err: any) {
+        alert('Gagal membaca file CSV: ' + (err?.message || 'Format tidak valid'));
+      }
     };
     reader.readAsText(file);
+    // Reset file input target value so same file can be re-uploaded if modified
+    e.target.value = '';
   };
 
   const handleConfirmImport = async () => {
-    const studentsToImport: any[] = [];
+    if (importPreview.length === 0) return;
+    setIsImporting(true);
 
-    importPreview.forEach(item => {
-      const nis = item.nis || item.nisn || '';
-      const full_name = item.nama_lengkap || item.nama || item.name || '';
-      const className = item.nama_kelas || item.kelas || 'X DKV 1';
-      const deptCode = item.kode_jurusan || item.jurusan || 'DKV';
+    try {
+      const studentsToImport: any[] = [];
+      const classMap = new Map<string, typeof classes[0]>();
+      classes.forEach(c => {
+        classMap.set(c.name.toLowerCase().trim(), c);
+      });
 
-      const foundClass = classes.find(c => c.name.toLowerCase() === className.toLowerCase()) || classes[0];
+      for (let i = 0; i < importPreview.length; i++) {
+        const item = importPreview[i];
+        const nis = String(item.nis || item.nisn || '').trim();
+        const full_name = String(item.nama_lengkap || item.nama || item.name || '').trim();
+        const className = String(item.nama_kelas || item.kelas || 'X DKV 1').trim();
+        const deptCode = String(item.kode_jurusan || item.jurusan || 'DKV').trim();
 
-      if (nis && full_name) {
-        studentsToImport.push({
-          nis,
-          nisn: item.nisn || nis,
-          full_name,
-          gender: (item.jenis_kelamin?.toUpperCase() === 'P' ? 'P' : 'L') as 'L' | 'P',
-          class_id: foundClass.id,
-          class_name: foundClass.name,
-          department_id: foundClass.department_id,
-          department_code: deptCode,
-          academic_year: item.tahun_ajaran || '2024/2025',
-          status: 'active',
-          phone_parent: item.telepon_orang_tua || '',
-          address: item.alamat || '',
-        });
+        const foundClass = classMap.get(className.toLowerCase()) || classes[0];
+
+        if (nis && full_name) {
+          studentsToImport.push({
+            nis,
+            nisn: String(item.nisn || nis).trim(),
+            full_name,
+            gender: (String(item.jenis_kelamin || '').toUpperCase().startsWith('P') ? 'P' : 'L') as 'L' | 'P',
+            class_id: foundClass ? foundClass.id : 'cls-1',
+            class_name: foundClass ? foundClass.name : className,
+            department_id: foundClass ? foundClass.department_id : 'dept-dkv',
+            department_code: foundClass ? foundClass.department_code : deptCode,
+            academic_year: String(item.tahun_ajaran || '2024/2025').trim(),
+            status: 'active',
+            phone_parent: String(item.telepon_orang_tua || item.telepon || item.phone || '').trim(),
+            address: String(item.alamat || '').trim(),
+          });
+        }
       }
-    });
 
-    const result = await importStudentsCSV(studentsToImport);
-    alert(`Impor selesai! Berhasil menambahkan ${result.count} siswa. Duplikat diabaikan: ${result.duplicates}`);
-    setShowImportModal(false);
-    setImportPreview([]);
+      if (studentsToImport.length === 0) {
+        alert('Tidak ditemukan data siswa dengan kolom NIS dan Nama Lengkap yang valid.');
+        setIsImporting(false);
+        return;
+      }
+
+      const result = await importStudentsCSV(studentsToImport);
+      alert(`Impor data berhasil diproses!\n\n• Berhasil ditambahkan: ${result.count} siswa\n• Duplikat diabaikan: ${result.duplicates} siswa\n• Total siswa tersimpan: ${scopedStudents.length + result.count} siswa\n\nData siap digunakan untuk presensi dan otomatis disinkronkan ke Google Spreadsheet.`);
+      setShowImportModal(false);
+      setImportPreview([]);
+    } catch (err: any) {
+      alert('Terjadi kesalahan saat memproses impor: ' + (err?.message || 'Gagal menyimpan'));
+    } finally {
+      setIsImporting(false);
+    }
   };
 
   const canEdit = currentUser.role === 'admin' || currentUser.role === 'tim_kesiswaan';
@@ -284,24 +348,24 @@ export const StudentsView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredStudents.length > 0 ? (
-                filteredStudents.map(student => (
+              {paginatedStudents.length > 0 ? (
+                paginatedStudents.map(student => (
                   <tr key={student.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3.5 whitespace-nowrap font-mono font-bold text-slate-800">
-                      {student.nis}
-                      <span className="block text-[10px] text-slate-400 font-normal">NISN: {student.nisn}</span>
+                      {student.nis || '-'}
+                      <span className="block text-[10px] text-slate-400 font-normal">NISN: {student.nisn || '-'}</span>
                     </td>
                     <td className="px-4 py-3.5 font-extrabold text-slate-900">
-                      {student.full_name}
+                      {student.full_name || 'Tanpa Nama'}
                     </td>
                     <td className="px-4 py-3.5 text-center font-bold text-slate-600">
-                      {student.gender}
+                      {student.gender || 'L'}
                     </td>
                     <td className="px-4 py-3.5 font-bold text-blue-700">
-                      {student.class_name}
+                      {student.class_name || '-'}
                     </td>
                     <td className="px-4 py-3.5 text-slate-600 font-medium">
-                      {student.department_code}
+                      {student.department_code || '-'}
                     </td>
                     <td className="px-4 py-3.5 text-slate-600 font-mono text-[11px]">
                       {student.phone_parent || '-'}
@@ -318,14 +382,14 @@ export const StudentsView: React.FC = () => {
                         <div className="flex items-center justify-center gap-1.5">
                           <button
                             onClick={() => handleOpenEdit(student)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                             title="Edit Data Siswa"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDelete(student.id, student.full_name)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                             title="Hapus Siswa"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -344,6 +408,82 @@ export const StudentsView: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Table Pagination Controls */}
+        <div className="p-3.5 sm:p-4 bg-slate-50/80 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
+          {/* Summary info */}
+          <div className="text-slate-600 font-medium text-center sm:text-left">
+            Menampilkan <strong className="text-slate-900">{filteredStudents.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}</strong> &ndash;{' '}
+            <strong className="text-slate-900">{pageSize === -1 ? filteredStudents.length : Math.min(currentPage * pageSize, filteredStudents.length)}</strong> dari{' '}
+            <strong className="text-blue-700 font-black">{filteredStudents.length}</strong> siswa terdaftar
+          </div>
+
+          {/* Controls: Page Size + Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className="flex items-center gap-1.5 text-slate-600 font-medium text-[11px] sm:text-xs">
+              <span>Per halaman:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="px-2 py-1 bg-white border border-slate-300 rounded-lg font-bold text-slate-700 cursor-pointer shadow-2xs"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={-1}>Semua ({filteredStudents.length})</option>
+              </select>
+            </div>
+
+            {pageSize !== -1 && totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  title="Halaman Pertama"
+                >
+                  <ChevronsLeft className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  title="Halaman Sebelumnya"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                <span className="px-2.5 py-1 bg-blue-100 text-blue-800 border border-blue-200 font-black rounded-lg text-[11px]">
+                  Hal {currentPage} / {totalPages}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  title="Halaman Berikutnya"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                  title="Halaman Terakhir"
+                >
+                  <ChevronsRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -473,51 +613,78 @@ export const StudentsView: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-base font-black text-slate-900">
-                  Pratinjau Impor CSV ({importPreview.length} Baris Data)
+                  Pratinjau Impor CSV ({importPreview.length} Calon Data Siswa)
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Verifikasi kolom sebelum dimasukkan ke database siswa
+                  Verifikasi kolom sebelum dimasukkan ke database siswa ({importPreview.length >= 2000 ? 'Mendukung kapasitas 2.000+ siswa' : 'Data siap diproses'})
                 </p>
               </div>
-              <button onClick={() => setShowImportModal(false)} className="text-slate-400 font-bold">✕</button>
+              <button 
+                onClick={() => !isImporting && setShowImportModal(false)} 
+                disabled={isImporting}
+                className="text-slate-400 hover:text-slate-600 font-bold p-1 cursor-pointer disabled:opacity-40"
+              >
+                ✕
+              </button>
             </div>
 
-            <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-xl">
+            <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left text-xs">
-                <thead className="bg-slate-100 text-slate-700 font-bold">
+                <thead className="bg-slate-100 text-slate-700 font-bold sticky top-0">
                   <tr>
-                    <th className="p-2">NIS</th>
-                    <th className="p-2">Nama</th>
-                    <th className="p-2">Kelas</th>
-                    <th className="p-2">Jurusan</th>
+                    <th className="p-2.5">NIS</th>
+                    <th className="p-2.5">Nama Lengkap</th>
+                    <th className="p-2.5">Kelas</th>
+                    <th className="p-2.5">Jurusan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {importPreview.slice(0, 10).map((row, idx) => (
+                  {importPreview.slice(0, 15).map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
-                      <td className="p-2 font-mono">{row.nis || row.nisn}</td>
-                      <td className="p-2 font-bold">{row.nama_lengkap || row.nama}</td>
-                      <td className="p-2">{row.nama_kelas || row.kelas}</td>
-                      <td className="p-2">{row.kode_jurusan || row.jurusan}</td>
+                      <td className="p-2.5 font-mono font-bold text-slate-800">{row.nis || row.nisn || '-'}</td>
+                      <td className="p-2.5 font-bold text-slate-900">{row.nama_lengkap || row.nama || row.name || '-'}</td>
+                      <td className="p-2.5 text-blue-700 font-medium">{row.nama_kelas || row.kelas || 'X DKV 1'}</td>
+                      <td className="p-2.5 text-slate-600">{row.kode_jurusan || row.jurusan || 'DKV'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {importPreview.length > 15 && (
+                <div className="p-2.5 text-center text-[11px] font-semibold text-slate-600 bg-slate-50 border-t border-slate-200">
+                  Menampilkan 15 sampel pertama dari total <strong className="text-blue-700">{importPreview.length} data siswa</strong> yang siap diimpor.
+                </div>
+              )}
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200">
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="px-4 py-2 border border-slate-300 rounded-xl font-bold text-slate-700"
-              >
-                Batal
-              </button>
-              <button
-                onClick={handleConfirmImport}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs"
-              >
-                Konfirmasi & Masukkan Data
-              </button>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-200">
+              <span className="text-[11px] text-slate-500">
+                Data akan otomatis digabungkan & diverifikasi dari duplikasi NIS.
+              </span>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(false)}
+                  disabled={isImporting}
+                  className="px-4 py-2 border border-slate-300 rounded-xl font-bold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-40 cursor-pointer text-xs"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmImport}
+                  disabled={isImporting}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold shadow-xs flex items-center gap-2 transition-all disabled:opacity-60 cursor-pointer text-xs"
+                >
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan {importPreview.length} Siswa...</span>
+                    </>
+                  ) : (
+                    <span>Konfirmasi & Masukkan Data ({importPreview.length})</span>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

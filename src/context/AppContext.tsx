@@ -195,71 +195,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? parseInt(saved, 10) : 20; // 20 detik interval default
   });
 
-  // Master Data States (Loaded from LocalStorage initially, updated from Google Sheets)
+  // Helper aman membaca LocalStorage agar tidak pernah memicu crash White Screen saat data ribuan / rusak
+  const safeParseStorage = <T,>(key: string, fallback: T): T => {
+    try {
+      const saved = localStorage.getItem(key);
+      if (!saved) return fallback;
+      const parsed = JSON.parse(saved);
+      return parsed !== null && parsed !== undefined ? parsed : fallback;
+    } catch (err) {
+      console.warn(`[PATROL SMESA] Memulihkan penyimpanan '${key}' karena format tidak valid:`, err);
+      return fallback;
+    }
+  };
+
+  // Master Data States (Loaded from LocalStorage safely, updated from Google Sheets)
   const [departments, setDepartments] = useState<Department[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.DEPARTMENTS);
-    return saved ? JSON.parse(saved) : INITIAL_DEPARTMENTS;
+    const loaded = safeParseStorage<Department[]>(STORAGE_KEYS.DEPARTMENTS, INITIAL_DEPARTMENTS);
+    return Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_DEPARTMENTS;
   });
 
   const [classes, setClasses] = useState<ClassRoom[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CLASSES);
-    return saved ? JSON.parse(saved) : INITIAL_CLASSES;
+    const loaded = safeParseStorage<ClassRoom[]>(STORAGE_KEYS.CLASSES, INITIAL_CLASSES);
+    return Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_CLASSES;
   });
 
   const [students, setStudents] = useState<Student[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-    return saved ? JSON.parse(saved) : INITIAL_STUDENTS;
+    const loaded = safeParseStorage<Student[]>(STORAGE_KEYS.STUDENTS, INITIAL_STUDENTS);
+    const list = Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_STUDENTS;
+    // Sanitasi data siswa agar semua properti string selalu terdefinisi (mencegah error .includes / .toLowerCase)
+    return list.map((s, idx) => ({
+      ...s,
+      id: s.id || `std-${idx}`,
+      nis: String(s.nis || '').trim(),
+      nisn: String(s.nisn || s.nis || '').trim(),
+      full_name: String(s.full_name || 'Siswa').trim(),
+      gender: (s.gender === 'P' ? 'P' : 'L') as 'L' | 'P',
+      class_id: s.class_id || 'cls-1',
+      class_name: s.class_name || 'X DKV 1',
+      department_id: s.department_id || 'dept-dkv',
+      department_code: s.department_code || 'DKV',
+      academic_year: s.academic_year || '2024/2025',
+      status: s.status || 'active',
+      phone_parent: s.phone_parent || '',
+      address: s.address || '',
+    }));
   });
 
   const [reasons, setReasons] = useState<LatenessReason[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.REASONS);
-    return saved ? JSON.parse(saved) : INITIAL_REASONS;
+    const loaded = safeParseStorage<LatenessReason[]>(STORAGE_KEYS.REASONS, INITIAL_REASONS);
+    return Array.isArray(loaded) && loaded.length > 0 ? loaded : INITIAL_REASONS;
   });
 
   const [records, setRecords] = useState<LatenessRecord[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.RECORDS);
-    return saved ? JSON.parse(saved) : INITIAL_RECORDS;
+    const loaded = safeParseStorage<LatenessRecord[]>(STORAGE_KEYS.RECORDS, INITIAL_RECORDS);
+    return Array.isArray(loaded) ? loaded : INITIAL_RECORDS;
   });
 
   const [coachings, setCoachings] = useState<CoachingRecord[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.COACHINGS);
-    return saved ? JSON.parse(saved) : INITIAL_COACHINGS;
+    const loaded = safeParseStorage<CoachingRecord[]>(STORAGE_KEYS.COACHINGS, INITIAL_COACHINGS);
+    return Array.isArray(loaded) ? loaded : INITIAL_COACHINGS;
   });
 
   const [schedules] = useState<SchoolSchedule[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SCHEDULES);
-    if (saved) {
-      try {
-        const parsed: SchoolSchedule[] = JSON.parse(saved);
-        // Ensure default masuk sekolah standard is 07:00 WIB
-        return parsed.map(s => (s.start_time === '06:45' ? { ...s, start_time: '07:00' } : s));
-      } catch {
-        return INITIAL_SCHEDULES;
-      }
+    const loaded = safeParseStorage<SchoolSchedule[]>(STORAGE_KEYS.SCHEDULES, INITIAL_SCHEDULES);
+    if (Array.isArray(loaded) && loaded.length > 0) {
+      // Ensure default masuk sekolah standard is 07:00 WIB
+      return loaded.map(s => (s.start_time === '06:45' ? { ...s, start_time: '07:00' } : s));
     }
     return INITIAL_SCHEDULES;
   });
 
   const [settings, setSettingsState] = useState<AppSettings>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return { 
-          ...INITIAL_SETTINGS, 
-          ...parsed,
-          default_start_time: parsed.default_start_time || '07:00',
-        };
-      } catch (e) {
-        return INITIAL_SETTINGS;
-      }
-    }
-    return INITIAL_SETTINGS;
+    const loaded = safeParseStorage<Partial<AppSettings>>(STORAGE_KEYS.SETTINGS, INITIAL_SETTINGS);
+    return {
+      ...INITIAL_SETTINGS,
+      ...loaded,
+      default_start_time: loaded.default_start_time || '07:00',
+    };
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
-    return saved ? JSON.parse(saved) : [];
+    const loaded = safeParseStorage<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
+    return Array.isArray(loaded) ? loaded : [];
   });
 
   // Helper penyimpanan LocalStorage aman dari batas kuota browser (5MB) saat data mencapai ribuan
@@ -1160,16 +1177,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let count = 0;
     let duplicates = 0;
     const newStudents: Student[] = [];
-    const existingNisSet = new Set(students.map(s => s.nis));
+    const existingNisSet = new Set(students.map(s => String(s.nis || '').trim().toLowerCase()));
 
-    for (const item of parsedStudents) {
-      if (existingNisSet.has(item.nis)) {
+    const baseTime = Date.now();
+    for (let i = 0; i < parsedStudents.length; i++) {
+      const item = parsedStudents[i];
+      const cleanNis = String(item.nis || '').trim();
+      const nisKey = cleanNis.toLowerCase();
+
+      if (!cleanNis || existingNisSet.has(nisKey)) {
         duplicates++;
       } else {
-        existingNisSet.add(item.nis);
+        existingNisSet.add(nisKey);
         newStudents.push({
           ...item,
-          id: 'std-' + Date.now() + '-' + count,
+          id: `std-${baseTime}-${count}`,
+          nis: cleanNis,
+          nisn: String(item.nisn || cleanNis).trim(),
+          full_name: String(item.full_name || 'Siswa').trim(),
+          gender: (item.gender === 'P' ? 'P' : 'L') as 'L' | 'P',
+          class_id: item.class_id || 'cls-1',
+          class_name: item.class_name || 'X DKV 1',
+          department_id: item.department_id || 'dept-dkv',
+          department_code: item.department_code || 'DKV',
+          academic_year: item.academic_year || '2024/2025',
+          status: item.status || 'active',
+          phone_parent: item.phone_parent || '',
+          address: item.address || '',
         });
         count++;
       }
@@ -1179,7 +1213,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const merged = [...newStudents, ...students];
       setStudents(merged);
       if (isGoogleSheetsConnected) {
-        postToGoogleSheets('syncAll', { data: { students: merged } });
+        postToGoogleSheets('syncAll', { data: { students: merged } }).catch(e => {
+          console.warn('Background sync students to Google Sheets:', e);
+        });
       }
       logAudit('IMPORT', 'SISWA', `Impor CSV berhasil: ${count} siswa ditambahkan, ${duplicates} duplikat diabaikan.`);
     }
