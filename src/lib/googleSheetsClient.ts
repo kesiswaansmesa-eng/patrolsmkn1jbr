@@ -101,6 +101,7 @@ export interface PingResult {
   scriptTimezone?: string;
   serverTimeWIB?: string;
   isTimezoneSynced?: boolean;
+  capacities?: Record<string, { maxRows: number; lastRow: number; maxCols?: number }>;
 }
 
 export const pingGoogleSheets = async (customUrl?: string): Promise<PingResult> => {
@@ -146,6 +147,7 @@ export const pingGoogleSheets = async (customUrl?: string): Promise<PingResult> 
         scriptTimezone: data.scriptTimezone,
         serverTimeWIB: data.serverTimeWIB,
         isTimezoneSynced: isSynced,
+        capacities: data.capacities,
       };
     } else {
       return {
@@ -270,4 +272,11 @@ export const recalculateGoogleSheetsLateDurations = async (customUrl?: string) =
  */
 export const resetGoogleSheetsRecords = async (customUrl?: string) => {
   return postToGoogleSheets('resetRecords', {}, customUrl);
+};
+
+/**
+ * Meminta Google Apps Script meningkatkan kapasitas baris seluruh sheet (> 2.000 s/d 10.000+ baris)
+ */
+export const expandGoogleSheetsCapacity = async (minRows: number = 5000, customUrl?: string) => {
+  return postToGoogleSheets('expandCapacity', { minRows }, customUrl);
 };

@@ -95,15 +95,29 @@ function doGet(e) {
     } catch (tzErr) {}
 
     if (action === 'ping') {
+      var capacities = {};
+      for (var k in SHEETS) {
+        var shName = SHEETS[k];
+        var shObj = ss.getSheetByName(shName);
+        if (shObj) {
+          capacities[shName] = {
+            maxRows: shObj.getMaxRows(),
+            lastRow: shObj.getLastRow(),
+            maxCols: shObj.getMaxColumns()
+          };
+        }
+      }
+
       return jsonResponse({
         status: 'success',
-        message: 'Koneksi ke Google Apps Script & Spreadsheet SMKN 1 Jember BERHASIL!',
+        message: 'Koneksi ke Google Apps Script & Spreadsheet SMKN 1 Jember BERHASIL (Kapasitas Besar Aktif)!',
         spreadsheetName: ss.getName(),
         spreadsheetId: ss.getId(),
         timezone: ss.getSpreadsheetTimeZone(),
         scriptTimezone: Session.getScriptTimeZone(),
         serverTimeWIB: Utilities.formatDate(new Date(), 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss'),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        capacities: capacities
       });
     }
 
@@ -249,6 +263,29 @@ function doPost(e) {
       });
     }
 
+    // Aksi Peningkatan Kapasitas Database (> 2.000 s/d 10.000+ Baris)
+    if (action === 'expandCapacity') {
+      var targetMinRows = parseInt(payload.minRows, 10) || 5000;
+      var results = {};
+      for (var k in SHEETS) {
+        var shName = SHEETS[k];
+        var shObj = getOrCreateSheet(ss, shName, SHEET_HEADERS[shName]);
+        ensureSheetCapacity(shObj, targetMinRows);
+        trimExcessColumns(shObj, SHEET_HEADERS[shName].length);
+        results[shName] = {
+          maxRows: shObj.getMaxRows(),
+          lastRow: shObj.getLastRow(),
+          maxCols: shObj.getMaxColumns()
+        };
+      }
+      return jsonResponse({
+        status: 'success',
+        message: 'Kapasitas database Google Spreadsheet berhasil ditingkatkan hingga ' + targetMinRows + ' baris per tabel!',
+        targetMinRows: targetMinRows,
+        details: results
+      });
+    }
+
     // 4. Update Status Verifikasi / Pembatalan Keterlambatan
     if (action === 'updateRecord') {
       var updated = payload.record;
@@ -336,11 +373,37 @@ function jsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+/**
+ * Memastikan kapasitas baris Google Sheet minimal mencukupi target minRows.
+ * Default kapasitas tinggi (5.000 s/d 10.000+ baris) untuk menampung data ribuan siswa & presensi.
+ */
+function ensureSheetCapacity(sheet, minRows) {
+  var currentMax = sheet.getMaxRows();
+  if (currentMax < minRows) {
+    var toAdd = minRows - currentMax;
+    sheet.insertRowsAfter(currentMax, toAdd);
+  }
+}
+
+/**
+ * Memangkas kolom kosong berlebih agar tidak memboroskan batas kuota cell Google Sheets (10 juta cell)
+ */
+function trimExcessColumns(sheet, requiredColumns) {
+  var maxCols = sheet.getMaxColumns();
+  if (maxCols > requiredColumns) {
+    sheet.deleteColumns(requiredColumns + 1, maxCols - requiredColumns);
+  }
+}
+
 function getOrCreateSheet(ss, sheetName, headers) {
   var sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
     sheet = ss.insertSheet(sheetName);
     formatHeaderRow(sheet, headers);
+  }
+  // Alokasi kapasitas awal yang tinggi (minimal 5.000 baris untuk Keterlambatan dan Siswa)
+  if (sheetName === SHEETS.KETERLAMBATAN || sheetName === SHEETS.SISWA) {
+    ensureSheetCapacity(sheet, 5000);
   }
   return sheet;
 }
@@ -357,11 +420,32 @@ function formatHeaderRow(sheet, headers) {
   for (var i = 1; i <= headers.length; i++) {
     sheet.autoResizeColumn(i);
   }
+  // Pangkas kolom berlebih di luar header resmi
+  trimExcessColumns(sheet, headers.length);
+
   // Format kolom late_duration_minutes khusus sebagai NUMBER
   var lateIdx = headers.indexOf('late_duration_minutes');
   if (lateIdx !== -1 && sheet.getMaxRows() > 1) {
     sheet.getRange(2, lateIdx + 1, sheet.getMaxRows() - 1, 1).setNumberFormat('0');
   }
+}
+
+/**
+ * Format tanggal cepat untuk pembacaan ribuan data tanpa bottleneck fungsi Utilities.formatDate
+ */
+function fastFormatDateGAS(cellVal, key) {
+  if (cellVal instanceof Date) {
+    var y = cellVal.getFullYear();
+    var m = ('0' + (cellVal.getMonth() + 1)).slice(-2);
+    var d = ('0' + cellVal.getDate()).slice(-2);
+    if (key === 'event_date') return y + '-' + m + '-' + d;
+    var hh = ('0' + cellVal.getHours()).slice(-2);
+    var mm = ('0' + cellVal.getMinutes()).slice(-2);
+    if (key === 'arrival_time' || key === 'scheduled_time') return hh + ':' + mm;
+    var ss = ('0' + cellVal.getSeconds()).slice(-2);
+    return y + '-' + m + '-' + d + ' ' + hh + ':' + mm + ':' + ss;
+  }
+  return null;
 }
 
 function readSheetData(ss, sheetName) {
@@ -384,31 +468,17 @@ function readSheetData(ss, sheetName) {
       if (cellVal !== '' && cellVal !== null && cellVal !== undefined) {
         hasContent = true;
       }
-      // Konversi format tanggal jika objek Date atau string
+      
+      // Konversi format tanggal cepat
       if (cellVal instanceof Date) {
-        if (key === 'event_date') {
-          // Format YYYY-MM-DD khusus tanggal keterlambatan (WIB)
-          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'yyyy-MM-dd');
-        } else if (key === 'arrival_time' || key === 'scheduled_time') {
-          // Format HH:mm khusus waktu kedatangan / jam masuk
-          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'HH:mm');
-        } else {
-          rowObj[key] = Utilities.formatDate(cellVal, 'Asia/Jakarta', 'yyyy-MM-dd HH:mm:ss');
-        }
+        var fastFormatted = fastFormatDateGAS(cellVal, key);
+        rowObj[key] = fastFormatted || cellVal.toISOString();
       } else if (typeof cellVal === 'string' && key === 'event_date') {
         var mIso = cellVal.match(/^(\d{4}-\d{2}-\d{2})/);
-        if (mIso) {
-          rowObj[key] = mIso[1];
-        } else {
-          rowObj[key] = cellVal;
-        }
+        rowObj[key] = mIso ? mIso[1] : cellVal;
       } else if (typeof cellVal === 'string' && (key === 'arrival_time' || key === 'scheduled_time')) {
         var mTime = cellVal.match(/(\d{2}:\d{2})/);
-        if (mTime) {
-          rowObj[key] = mTime[1];
-        } else {
-          rowObj[key] = cellVal;
-        }
+        rowObj[key] = mTime ? mTime[1] : cellVal;
       } else if (key === 'late_duration_minutes') {
         // Pastikan late_duration_minutes terbaca sebagai integer numerik
         var numLate = parseInt(cellVal, 10);
@@ -429,6 +499,10 @@ function readSheetData(ss, sheetName) {
   return rows;
 }
 
+/**
+ * Menulis data massal dengan jaminan daya tampung tinggi (> 2.000 s/d 20.000+ data).
+ * Menggunakan chunking batch 500 baris per setValues dan alokasi dinamis sheet.
+ */
 function overwriteSheet(ss, sheetName, headers, dataArray) {
   var sheet = getOrCreateSheet(ss, sheetName, headers);
   sheet.clear();
@@ -461,13 +535,25 @@ function overwriteSheet(ss, sheetName, headers, dataArray) {
     rowsToInsert.push(row);
   }
 
-  if (rowsToInsert.length > 0) {
-    sheet.getRange(2, 1, rowsToInsert.length, headers.length).setValues(rowsToInsert);
-    var lateIdx = headers.indexOf('late_duration_minutes');
-    if (lateIdx !== -1) {
-      sheet.getRange(2, lateIdx + 1, rowsToInsert.length, 1).setNumberFormat('0');
-    }
+  // 1. Pastikan kapasitas sheet mencukupi seluruh data + buffer 200 baris cadangan
+  var neededRows = rowsToInsert.length + 1;
+  ensureSheetCapacity(sheet, neededRows + 200);
+
+  // 2. Tulis data secara bertahap (chunking/batching 500 baris)
+  // Menghindari batas memori payload Apps Script dan error koordinat out of bounds
+  var BATCH_SIZE = 500;
+  for (var start = 0; start < rowsToInsert.length; start += BATCH_SIZE) {
+    var chunk = rowsToInsert.slice(start, start + BATCH_SIZE);
+    var startRow = 2 + start;
+    sheet.getRange(startRow, 1, chunk.length, headers.length).setValues(chunk);
   }
+
+  // 3. Format kolom late_duration_minutes khusus sebagai NUMBER
+  var lateIdx = headers.indexOf('late_duration_minutes');
+  if (lateIdx !== -1) {
+    sheet.getRange(2, lateIdx + 1, rowsToInsert.length, 1).setNumberFormat('0');
+  }
+
   return rowsToInsert.length;
 }
 
@@ -483,6 +569,15 @@ function appendRowFromObject(sheet, headers, obj) {
       row.push(val);
     }
   }
+
+  // Jika baris mendekati batas kapasitas sheet (kurang dari 10 baris tersisa),
+  // otomatis tambahkan 500 baris baru sekaligus agar transaksi append tidak macet
+  var lastRow = sheet.getLastRow();
+  var maxRows = sheet.getMaxRows();
+  if (lastRow >= maxRows - 10) {
+    sheet.insertRowsAfter(maxRows, 500);
+  }
+
   sheet.appendRow(row);
 }
 
@@ -496,6 +591,8 @@ function updateRowById(sheet, headers, id, updatedObj) {
   for (var i = 0; i < idValues.length; i++) {
     if (String(idValues[i][0]) === String(id)) {
       var rowNumber = i + 2;
+      // Ambil seluruh baris yang ada dalam 1 panggilan API (efisien untuk >2000 baris)
+      var currentRowValues = sheet.getRange(rowNumber, 1, 1, headers.length).getValues()[0];
       var newRow = [];
       for (var h = 0; h < headers.length; h++) {
         var field = headers[h];
@@ -503,7 +600,7 @@ function updateRowById(sheet, headers, id, updatedObj) {
           var v = updatedObj[field];
           newRow.push(typeof v === 'object' ? JSON.stringify(v) : v);
         } else {
-          newRow.push(sheet.getRange(rowNumber, h + 1).getValue());
+          newRow.push(currentRowValues[h]);
         }
       }
       sheet.getRange(rowNumber, 1, 1, headers.length).setValues([newRow]);
@@ -539,7 +636,11 @@ function initializeAllSheets(ss, seedData) {
     var name = SHEETS[sKey];
     var headers = SHEET_HEADERS[name];
     var sheet = getOrCreateSheet(ss, name, headers);
-    summary[name] = { created: true, headersCount: headers.length };
+    // Pastikan kapasitas baris tinggi (minimal 5.000 baris untuk Keterlambatan dan Siswa)
+    if (name === SHEETS.KETERLAMBATAN || name === SHEETS.SISWA) {
+      ensureSheetCapacity(sheet, 5000);
+    }
+    summary[name] = { created: true, headersCount: headers.length, maxRows: sheet.getMaxRows() };
   }
 
   // Jika ada seedData awal yang dikirimkan, masukkan langsung

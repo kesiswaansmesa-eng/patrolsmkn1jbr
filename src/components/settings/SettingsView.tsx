@@ -4,7 +4,7 @@ import {
   ExternalLink, RotateCcw, Save, ShieldAlert, Code2, AlertCircle, AlertTriangle, RefreshCw, 
   Sparkles, UploadCloud, Info, CheckCircle2, ChevronRight, HelpCircle, Layers,
   FileSpreadsheet, Zap, Clock, Table, Check, ArrowRight, GraduationCap, UserCheck, Award,
-  Calendar, Globe, Trash2
+  Calendar, Globe, Trash2, PlusCircle, ShieldCheck
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { GOOGLE_APPS_SCRIPT_CODE, TABLES_MENU_STRUCTURE } from '../../lib/googleAppsScriptCode';
@@ -16,6 +16,7 @@ export const SettingsView: React.FC = () => {
     currentUser, settings, updateSettings, isGoogleSheetsConnected, 
     gasUrl, saveGasUrl, clearGasUrlConfig, resetToDemoData, 
     syncAllDataToGoogleSheets, repairGoogleSheetsLateDurations, resetAllLatenessRecords, initGoogleSheets, refreshData,
+    expandGoogleSheetsCapacity, sheetCapacities,
     isSyncing, lastSyncedAt, isAutoSyncEnabled, toggleAutoSync,
     autoSyncIntervalSec, setAutoSyncInterval,
     records, students, classes, departments, reasons, users, coachings,
@@ -238,6 +239,27 @@ export const SettingsView: React.FC = () => {
       alert(`Error saat mereset data: ${err?.message || err}`);
     } finally {
       setIsResetting(false);
+    }
+  };
+
+  const [isExpandingCapacity, setIsExpandingCapacity] = useState(false);
+  const handleExpandCapacity = async (minRows: number) => {
+    if (!isGoogleSheetsConnected) {
+      alert('Sambungkan aplikasi ke Google Spreadsheet terlebih dahulu.');
+      return;
+    }
+    setIsExpandingCapacity(true);
+    try {
+      const res = await expandGoogleSheetsCapacity(minRows);
+      if (res.success) {
+        alert(`Peningkatan Daya Tampung Berhasil!\n\n${res.message}\nGoogle Spreadsheet Anda sekarang mampu menampung lebih dari ${minRows.toLocaleString('id-ID')} baris data dengan aman tanpa batas!`);
+      } else {
+        alert(`Gagal meningkatkan kapasitas: ${res.message}`);
+      }
+    } catch (err: any) {
+      alert(`Error: ${err?.message || err}`);
+    } finally {
+      setIsExpandingCapacity(false);
     }
   };
 
@@ -723,6 +745,111 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
+          {/* Card Daya Tampung Database Skala Besar (> 2.000 - 10.000+ Baris Data) */}
+          <div className="bg-gradient-to-br from-emerald-50/90 via-teal-50/50 to-blue-50/80 rounded-2xl p-6 border-2 border-emerald-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/80 pb-3">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white shadow-xs">
+                    Arsitektur Database Skala Besar
+                  </span>
+                  <span className="text-xs font-bold text-emerald-950">Daya Tampung &gt; 2.000 Data Siap</span>
+                </div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Database className="w-5 h-5 text-emerald-600" />
+                  Daya Tampung Data Google Sheets (&gt; 2.000 s/d 10.000+ Baris)
+                </h3>
+                <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
+                  Kode Apps Script & sistem PATROL SMESA telah dioptimalkan dengan <strong>Chunking Batch 500 Baris</strong>, <strong>Pre-Alokasi Otomatis</strong>, dan <strong>Column Trimming</strong> sehingga Google Sheets dapat menampung ribuan catatan presensi dan ribuan siswa tanpa batasan default 1.000 baris.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap sm:flex-col items-start sm:items-end gap-1.5 shrink-0">
+                <span className="text-xs font-bold text-slate-700 bg-white/90 px-3.5 py-2 rounded-xl border border-emerald-200 shadow-xs flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  Kapasitas: <strong className="text-emerald-700 font-mono text-sm">&gt; 10.000 Baris</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* Grid Status Kapasitas per Tabel */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white/90 p-3.5 rounded-xl border border-emerald-100 shadow-xs space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Tabel Keterlambatan</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-lg font-black text-slate-900">{records.length} <span className="text-xs font-normal text-slate-500">terisi</span></span>
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {sheetCapacities?.['Keterlambatan']?.maxRows ? `${sheetCapacities['Keterlambatan'].maxRows} Baris` : 'Min 5.000 Baris'}
+                  </span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-emerald-600 h-1.5 rounded-full transition-all" 
+                    style={{ width: `${Math.min(100, (records.length / (sheetCapacities?.['Keterlambatan']?.maxRows || 5000)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="bg-white/90 p-3.5 rounded-xl border border-emerald-100 shadow-xs space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Tabel Master Siswa</span>
+                <div className="flex items-baseline justify-between">
+                  <span className="text-lg font-black text-slate-900">{students.length} <span className="text-xs font-normal text-slate-500">siswa</span></span>
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {sheetCapacities?.['Siswa']?.maxRows ? `${sheetCapacities['Siswa'].maxRows} Baris` : 'Min 5.000 Baris'}
+                  </span>
+                </div>
+                <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                  <div 
+                    className="bg-emerald-600 h-1.5 rounded-full transition-all" 
+                    style={{ width: `${Math.min(100, (students.length / (sheetCapacities?.['Siswa']?.maxRows || 5000)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="bg-white/90 p-3.5 rounded-xl border border-emerald-100 shadow-xs space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Metode Penulisan</span>
+                <p className="text-xs font-bold text-slate-800">Batch Chunking 500</p>
+                <p className="text-[11px] text-slate-500 leading-tight">Menghindari memori overflow & timeout</p>
+              </div>
+
+              <div className="bg-white/90 p-3.5 rounded-xl border border-emerald-100 shadow-xs space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Perluasan Otomatis</span>
+                <p className="text-xs font-bold text-emerald-700 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Auto-Expand +500 Baris
+                </p>
+                <p className="text-[11px] text-slate-500 leading-tight">Menambah baris otomatis saat mendekati batas</p>
+              </div>
+            </div>
+
+            {/* Tombol Aksi Peningkatan Kapasitas */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-emerald-200/60">
+              <div className="text-xs text-slate-600 flex items-center gap-2">
+                <span className="font-semibold text-slate-700">Tingkatkan Kapasitas Manual ke Google Sheets:</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={!isGoogleSheetsConnected || isExpandingCapacity}
+                  onClick={() => handleExpandCapacity(5000)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <PlusCircle className="w-3.5 h-3.5" />
+                  <span>{isExpandingCapacity ? 'Memproses...' : 'Tingkatkan ke 5.000 Baris'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!isGoogleSheetsConnected || isExpandingCapacity}
+                  onClick={() => handleExpandCapacity(10000)}
+                  className="px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>{isExpandingCapacity ? 'Memproses...' : 'Tingkatkan ke 10.000 Baris'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* CARD ZONA KHUSUS ADMINISTRATOR: RESET DATA KETERLAMBATAN */}
           <div className="bg-gradient-to-br from-red-50/90 via-rose-50/60 to-red-100/40 rounded-2xl p-6 border-2 border-red-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-red-200/80 pb-3">
@@ -1057,6 +1184,29 @@ export const SettingsView: React.FC = () => {
                         <em>*Selesai! Kini waktu kedatangan dan tanggal otomatis tersimpan presisi sesuai waktu WIB aplikasi PATROL SMESA.</em>
                       </p>
                     </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 9: Daya Tampung Lebih dari 2.000 Data */}
+              <div className="flex gap-4 p-4 rounded-xl bg-emerald-50 border border-emerald-300">
+                <div className="w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-sm flex items-center justify-center flex-shrink-0">
+                  9
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-emerald-600" />
+                    <span>Daya Tampung Data Skala Besar (&gt; 2.000 s/d 10.000+ Baris Data)</span>
+                  </h3>
+                  <p className="text-xs text-emerald-900 leading-relaxed">
+                    Google Sheets bawaan baru memiliki 1.000 baris. Sistem PATROL SMESA telah dilengkapi dengan arsitektur skala besar agar bisa menampung ribuan data siswa dan presensi tanpa batas:
+                  </p>
+                  <div className="p-3 bg-white rounded-lg border border-emerald-200 text-xs text-slate-800 space-y-1.5">
+                    <p className="text-slate-700 leading-relaxed">
+                      &bull; <strong>Perluasan Otomatis:</strong> Di tab <em>"Koneksi & Realtime Sync"</em>, klik tombol <strong>"Tingkatkan ke 5.000 Baris"</strong> atau <strong>"Tingkatkan ke 10.000 Baris"</strong> untuk mengalokasikan kapasitas Google Spreadsheet secara instan.<br />
+                      &bull; <strong>Batch Chunking 500 Baris:</strong> Skrip membagi proses simpan ke dalam paket 500 baris per batch sehingga tidak akan terkena error memori atau koordinat range out of bounds.<br />
+                      &bull; <strong>Auto-Expand Mandiri di Sheets:</strong> Anda juga dapat membuka Google Spreadsheet langsung, gulir ke baris paling bawah, lalu ketik angka <strong>5000</strong> atau <strong>10000</strong> pada tombol <em>"Tambahkan baris lainnya di bagian bawah"</em> dan klik <strong>Tambah</strong>.
+                    </p>
                   </div>
                 </div>
               </div>

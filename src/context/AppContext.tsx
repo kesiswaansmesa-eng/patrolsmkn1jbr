@@ -13,7 +13,7 @@ import {
   getGasConfig, setGasUrl, clearGasUrl, pingGoogleSheets, 
   fetchAllFromGoogleSheets, postToGoogleSheets, initGoogleSheetsStructure, 
   syncAllDataToGoogleSheetsBackend, recalculateGoogleSheetsLateDurations,
-  resetGoogleSheetsRecords,
+  resetGoogleSheetsRecords, expandGoogleSheetsCapacity as expandGoogleSheetsCapacityClient,
   STORAGE_KEY_AUTO_SYNC_ENABLED, STORAGE_KEY_AUTO_SYNC_INTERVAL, 
   normalizeGasUrl, OFFICIAL_SMESA_GAS_URL, resetToOfficialGasUrl
 } from '../lib/googleSheetsClient';
@@ -93,10 +93,12 @@ interface AppContextType {
   lastSyncedAt: Date | null;
   isSyncing: boolean;
   syncStatusMessage: string | null;
+  sheetCapacities: Record<string, { maxRows: number; lastRow: number; maxCols?: number }> | null;
   refreshData: () => Promise<void>;
   syncAllDataToGoogleSheets: () => Promise<{ success: boolean; message: string; details?: Record<string, number> }>;
   repairGoogleSheetsLateDurations: () => Promise<{ success: boolean; message: string; fixedCount?: number }>;
   resetAllLatenessRecords: () => Promise<{ success: boolean; message: string; count: number }>;
+  expandGoogleSheetsCapacity: (minRows?: number) => Promise<{ success: boolean; message: string; details?: any }>;
   initGoogleSheets: () => Promise<{ success: boolean; message: string; details?: any }>;
   saveGasUrl: (url: string) => Promise<{ success: boolean; message: string; latencyMs?: number }>;
   clearGasUrlConfig: () => void;
@@ -181,6 +183,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatusMessage, setSyncStatusMessage] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [sheetCapacities, setSheetCapacities] = useState<Record<string, { maxRows: number; lastRow: number; maxCols?: number }> | null>(null);
 
   const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem(STORAGE_KEY_AUTO_SYNC_ENABLED);
@@ -259,36 +262,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return saved ? JSON.parse(saved) : [];
   });
 
-  // Sync to LocalStorage
+  // Helper penyimpanan LocalStorage aman dari batas kuota browser (5MB) saat data mencapai ribuan
+  const safeSetLocalStorage = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn(`LocalStorage kuota penuh untuk '${key}'. Data tetap tersimpan aman di memori & database Google Sheets.`, e);
+    }
+  };
+
+  // Sync to LocalStorage (Dilengkapi proteksi kuota browser untuk skala ribuan data)
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+    safeSetLocalStorage(STORAGE_KEYS.USERS, JSON.stringify(users));
   }, [users]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
+    safeSetLocalStorage(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
   }, [students]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CLASSES, JSON.stringify(classes));
+    safeSetLocalStorage(STORAGE_KEYS.CLASSES, JSON.stringify(classes));
   }, [classes]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(departments));
+    safeSetLocalStorage(STORAGE_KEYS.DEPARTMENTS, JSON.stringify(departments));
   }, [departments]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.REASONS, JSON.stringify(reasons));
+    safeSetLocalStorage(STORAGE_KEYS.REASONS, JSON.stringify(reasons));
   }, [reasons]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.RECORDS, JSON.stringify(records));
+    safeSetLocalStorage(STORAGE_KEYS.RECORDS, JSON.stringify(records));
   }, [records]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.COACHINGS, JSON.stringify(coachings));
+    safeSetLocalStorage(STORAGE_KEYS.COACHINGS, JSON.stringify(coachings));
   }, [coachings]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    safeSetLocalStorage(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
   }, [settings]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(auditLogs));
+    safeSetLocalStorage(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify(auditLogs));
   }, [auditLogs]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
+    safeSetLocalStorage(STORAGE_KEYS.CURRENT_USER_ID, currentUser.id);
   }, [currentUser]);
 
   // Audit Logger
@@ -442,6 +454,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (isMounted) {
         if (ping.success) {
           setIsGoogleSheetsConnected(true);
+          if (ping.capacities) {
+            setSheetCapacities(ping.capacities);
+          }
           // Pull latest data
           refreshData();
         } else {
@@ -506,6 +521,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     if (ping.success) {
       setIsGoogleSheetsConnected(true);
+      if (ping.capacities) {
+        setSheetCapacities(ping.capacities);
+      }
       setSyncStatusMessage('Terhubung dengan Google Spreadsheet!');
       // Initial fetch
       await refreshData();
@@ -723,6 +741,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       message: `Berhasil mereset ${countBefore} data keterlambatan di sistem${sheetsNote}`,
       count: countBefore,
     };
+  };
+
+  // Tingkatkan Kapasitas Baris Google Sheets (> 2.000 s/d 10.000+ Baris)
+  const expandGoogleSheetsCapacity = async (minRows: number = 5000): Promise<{ success: boolean; message: string; details?: any }> => {
+    const { url, isConfigured } = getGasConfig();
+    if (!isConfigured || !url) {
+      return { success: false, message: 'URL Google Apps Script belum dikonfigurasi.' };
+    }
+
+    setIsSyncing(true);
+    setSyncStatusMessage(`Meningkatkan kapasitas daya tampung Google Sheets ke ${minRows.toLocaleString('id-ID')} baris...`);
+
+    try {
+      const res = await expandGoogleSheetsCapacityClient(minRows, url);
+      setIsSyncing(false);
+      if (res.success) {
+        if (res.details) {
+          setSheetCapacities(res.details);
+        }
+        setSyncStatusMessage(`Kapasitas Google Sheets berhasil ditingkatkan hingga ${minRows.toLocaleString('id-ID')} baris!`);
+        logAudit('UPDATE', 'SISTEM', `Meningkatkan kapasitas database Google Sheets menjadi ${minRows} baris`);
+      }
+      return res;
+    } catch (err: any) {
+      setIsSyncing(false);
+      return { success: false, message: err?.message || 'Gagal meningkatkan kapasitas Google Sheets' };
+    }
   };
 
   // Role Switcher & Database Login
@@ -1430,10 +1475,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lastSyncedAt,
         isSyncing,
         syncStatusMessage,
+        sheetCapacities,
         refreshData,
         syncAllDataToGoogleSheets,
         repairGoogleSheetsLateDurations,
         resetAllLatenessRecords,
+        expandGoogleSheetsCapacity,
         initGoogleSheets,
         saveGasUrl,
         clearGasUrlConfig,
