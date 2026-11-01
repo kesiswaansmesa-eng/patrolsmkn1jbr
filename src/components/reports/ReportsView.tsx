@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { 
   FileText, Download, Printer, Filter, Calendar, 
-  School, Building2, CheckCircle, ShieldCheck
+  School, Building2, CheckCircle, ShieldCheck, RotateCcw,
+  Layers, ChevronDown
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { formatIndonesianDate, getWIBTodayString, isDateToday, isDateThisWeek, isDateThisMonth } from '../../utils/dateUtils';
+import { formatIndonesianDate, getWIBTodayString, isDateToday, isDateThisWeek, isDateThisMonth, normalizeDateString } from '../../utils/dateUtils';
 import { exportToCSV, exportOfficialReportToCSV } from '../../utils/exportUtils';
 
 export type ReportType = 
@@ -20,22 +21,67 @@ export type ReportType =
   | 'pembinaan' 
   | 'leaderboard';
 
+const MONTHS_INDONESIAN = [
+  { value: 1, name: 'Januari' },
+  { value: 2, name: 'Februari' },
+  { value: 3, name: 'Maret' },
+  { value: 4, name: 'April' },
+  { value: 5, name: 'Mei' },
+  { value: 6, name: 'Juni' },
+  { value: 7, name: 'Juli' },
+  { value: 8, name: 'Agustus' },
+  { value: 9, name: 'September' },
+  { value: 10, name: 'Oktober' },
+  { value: 11, name: 'November' },
+  { value: 12, name: 'Desember' },
+];
+
 export const ReportsView: React.FC = () => {
   const { 
     scopedRecords, departments, classes, coachings, students, 
     currentUser, settings 
   } = useApp();
 
-  const [reportType, setReportType] = useState<ReportType>('harian');
+  const [reportType, setReportType] = useState<ReportType>('bulanan');
   const [filterDept, setFilterDept] = useState('');
   const [filterClass, setFilterClass] = useState('');
   const [selectedDate, setSelectedDate] = useState(getWIBTodayString());
 
+  // Filter Bulan & Tahun Khusus Laporan Bulanan
+  const todayWIB = getWIBTodayString();
+  const [currentWIBYear, currentWIBMonth] = todayWIB.split('-').map(Number);
+  const [selectedMonth, setSelectedMonth] = useState<number>(currentWIBMonth || 10);
+  const [selectedYear, setSelectedYear] = useState<number>(currentWIBYear || 2026);
+
+  // Available Years from data and default range
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<number>();
+    yearsSet.add(2024);
+    yearsSet.add(2025);
+    yearsSet.add(2026);
+    yearsSet.add(2027);
+    scopedRecords.forEach(r => {
+      if (r.event_date) {
+        const y = parseInt(r.event_date.substring(0, 4), 10);
+        if (!isNaN(y) && y >= 2020 && y <= 2035) {
+          yearsSet.add(y);
+        }
+      }
+    });
+    return Array.from(yearsSet).sort((a, b) => b - a);
+  }, [scopedRecords]);
+
+  // Classes dynamically scoped by selected department
+  const availableClasses = useMemo(() => {
+    if (!filterDept) return classes;
+    return classes.filter(c => c.department_code === filterDept || c.department_id === filterDept);
+  }, [classes, filterDept]);
+
   // Report Types Metadata
   const reportOptions: Array<{ id: ReportType; title: string; desc: string }> = [
-    { id: 'harian', title: '1. Laporan Harian', desc: 'Rekapitulasi keterlambatan siswa per hari tertentu' },
-    { id: 'mingguan', title: '2. Laporan Mingguan', desc: 'Rekapitulasi keterlambatan minggu berjalan' },
-    { id: 'bulanan', title: '3. Laporan Bulanan', desc: 'Rekapitulasi keterlambatan bulan berjalan' },
+    { id: 'bulanan', title: '1. Laporan Bulanan', desc: 'Rekapitulasi keterlambatan per bulan, jurusan & kelas' },
+    { id: 'harian', title: '2. Laporan Harian', desc: 'Rekapitulasi keterlambatan siswa per hari tertentu' },
+    { id: 'mingguan', title: '3. Laporan Mingguan', desc: 'Rekapitulasi keterlambatan minggu berjalan' },
     { id: 'semester', title: '4. Laporan Semester', desc: 'Evaluasi semester ganjil/genap berjalan' },
     { id: 'tahunan', title: '5. Laporan Tahun Ajaran', desc: 'Laporan komprehensif tahun pelajaran' },
     { id: 'per_siswa', title: '6. Laporan per Siswa', desc: 'Frekuensi dan durasi per individu siswa' },
@@ -46,27 +92,61 @@ export const ReportsView: React.FC = () => {
     { id: 'leaderboard', title: '11. Laporan Peringkat Kedisiplinan', desc: 'Rasio kedisiplinan dan kategori zero keterlambatan' },
   ];
 
+  // Selected month name
+  const selectedMonthName = MONTHS_INDONESIAN.find(m => m.value === selectedMonth)?.name || 'Bulan Berjalan';
+
+  // Dynamic report title
+  const currentReportTitle = useMemo(() => {
+    if (reportType === 'bulanan') {
+      let t = `Laporan Keterlambatan Siswa Bulan ${selectedMonthName} ${selectedYear}`;
+      if (filterClass) t += ` - Kelas ${filterClass}`;
+      else if (filterDept) t += ` - Jurusan ${filterDept}`;
+      return t;
+    }
+    const base = reportOptions.find(r => r.id === reportType)?.title || 'Laporan Keterlambatan';
+    let extra = '';
+    if (filterClass) extra += ` - Kelas ${filterClass}`;
+    else if (filterDept) extra += ` - Jurusan ${filterDept}`;
+    return `${base}${extra}`;
+  }, [reportType, selectedMonthName, selectedYear, filterDept, filterClass, reportOptions]);
+
+  // Report period label for signatures and headers
+  const reportPeriodLabel = useMemo(() => {
+    if (reportType === 'harian') {
+      return formatIndonesianDate(selectedDate);
+    }
+    if (reportType === 'bulanan') {
+      return `Bulan ${selectedMonthName} ${selectedYear}`;
+    }
+    if (reportType === 'mingguan') {
+      return 'Minggu Berjalan';
+    }
+    return `Tahun Ajaran ${settings.academic_year || '2024/2025'}`;
+  }, [reportType, selectedDate, selectedMonthName, selectedYear, settings.academic_year]);
+
   // Filtered dataset for active report
   const filteredRecords = useMemo(() => {
     return scopedRecords.filter(r => {
       if (r.is_cancelled) return false;
       if (filterDept && r.department_code !== filterDept) return false;
-      if (filterClass && r.class_name !== filterClass) return false;
+      if (filterClass && r.class_name !== filterClass && r.class_id !== filterClass) return false;
+
+      const cleanDate = normalizeDateString(r.event_date);
 
       if (reportType === 'harian') {
-        return r.event_date === selectedDate;
+        return cleanDate === selectedDate;
       }
       if (reportType === 'mingguan') {
         return isDateThisWeek(r.event_date);
       }
       if (reportType === 'bulanan') {
-        return isDateThisMonth(r.event_date);
+        const targetMonthPrefix = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        return cleanDate.startsWith(targetMonthPrefix);
       }
       return true;
     });
-  }, [scopedRecords, filterDept, filterClass, reportType, selectedDate]);
+  }, [scopedRecords, filterDept, filterClass, reportType, selectedDate, selectedMonth, selectedYear]);
 
-  // Handle Export CSV
   // Handle Export CSV Lengkap dengan Lembar Pengesahan Resmi (Kepsek & Waka Kesiswaan)
   const handleExportOfficialReport = () => {
     const rows = filteredRecords.map((r, i) => ({
@@ -87,10 +167,16 @@ export const ReportsView: React.FC = () => {
 
     const periodLabel = reportType === 'harian' 
       ? formatIndonesianDate(selectedDate) 
+      : reportType === 'bulanan'
+      ? `Bulan ${selectedMonthName} ${selectedYear}${filterDept ? ` • Jurusan ${filterDept}` : ''}${filterClass ? ` • Kelas ${filterClass}` : ''}`
       : `Tahun Ajaran ${settings.academic_year || '2024/2025'} (Semester ${settings.semester || 'Ganjil'})`;
 
+    const fileSuffix = reportType === 'bulanan'
+      ? `Bulanan_${selectedMonthName}_${selectedYear}${filterDept ? `_${filterDept}` : ''}${filterClass ? `_${filterClass.replace(/\s+/g, '-')}` : ''}`
+      : `${reportType}_${getWIBTodayString()}`;
+
     exportOfficialReportToCSV({
-      filename: `Laporan_Resmi_${reportType}_SMESA_${getWIBTodayString()}`,
+      filename: `Laporan_Resmi_${fileSuffix}_SMESA_${getWIBTodayString()}`,
       reportTitle: currentReportTitle,
       periodText: periodLabel,
       schoolName: settings.school_name || 'SMK NEGERI 1 JEMBER',
@@ -130,15 +216,17 @@ export const ReportsView: React.FC = () => {
       NIP_Waka_Kesiswaan: settings.vice_headmaster_nip || '198604122010011012',
     }));
 
-    exportToCSV(`Data_Keterlambatan_${reportType}_SMESA_${getWIBTodayString()}`, rows);
+    const fileSuffix = reportType === 'bulanan'
+      ? `Bulanan_${selectedMonthName}_${selectedYear}${filterDept ? `_${filterDept}` : ''}${filterClass ? `_${filterClass.replace(/\s+/g, '-')}` : ''}`
+      : `${reportType}_${getWIBTodayString()}`;
+
+    exportToCSV(`Data_Keterlambatan_${fileSuffix}_SMESA`, rows);
   };
 
   // Handle Print with School Letterhead
   const handlePrint = () => {
     window.print();
   };
-
-  const currentReportTitle = reportOptions.find(r => r.id === reportType)?.title || 'Laporan Keterlambatan';
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -203,45 +291,166 @@ export const ReportsView: React.FC = () => {
         </div>
 
         {/* Filter controls */}
-        <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-slate-100 text-xs">
-          {reportType === 'harian' && (
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 mb-1">Tanggal</label>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800"
-              />
+        <div className="pt-3 border-t border-slate-100 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+              <Filter className="w-4 h-4 text-blue-600" />
+              <span>Pengaturan Filter Dokumen {reportType === 'bulanan' ? '(Laporan Bulanan)' : ''}:</span>
             </div>
-          )}
-
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1">Jurusan</label>
-            <select
-              value={filterDept}
-              onChange={(e) => setFilterDept(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800"
-            >
-              <option value="">Semua Jurusan</option>
-              {departments.map(d => (
-                <option key={d.code} value={d.code}>{d.code}</option>
-              ))}
-            </select>
+            {(filterDept || filterClass || (reportType === 'harian' && selectedDate !== getWIBTodayString()) || (reportType === 'bulanan' && (selectedMonth !== currentWIBMonth || selectedYear !== currentWIBYear))) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterDept('');
+                  setFilterClass('');
+                  setSelectedDate(getWIBTodayString());
+                  setSelectedMonth(currentWIBMonth || 10);
+                  setSelectedYear(currentWIBYear || 2026);
+                }}
+                className="text-[11px] font-bold text-rose-600 hover:text-rose-800 flex items-center gap-1 self-start sm:self-auto cursor-pointer"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Reset Filter</span>
+              </button>
+            )}
           </div>
 
-          <div>
-            <label className="block text-[10px] font-bold text-slate-500 mb-1">Kelas</label>
-            <select
-              value={filterClass}
-              onChange={(e) => setFilterClass(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-800"
-            >
-              <option value="">Semua Kelas</option>
-              {classes.map(c => (
-                <option key={c.id} value={c.name}>{c.name}</option>
-              ))}
-            </select>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            {/* 1. Pilih Bulan (Aktif jika Laporan Bulanan) */}
+            {reportType === 'bulanan' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Pilih Bulan:</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-hidden focus:border-blue-600 cursor-pointer shadow-2xs"
+                >
+                  {MONTHS_INDONESIAN.map(m => (
+                    <option key={m.value} value={m.value}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* 2. Pilih Tahun (Aktif jika Laporan Bulanan) */}
+            {reportType === 'bulanan' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Pilih Tahun:</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-hidden focus:border-blue-600 cursor-pointer shadow-2xs"
+                >
+                  {availableYears.map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Jika Laporan Harian: Pilih Tanggal */}
+            {reportType === 'harian' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Tanggal Harian:</span>
+                  <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-bold text-slate-800 focus:outline-hidden focus:border-blue-600 cursor-pointer shadow-2xs"
+                />
+              </div>
+            )}
+
+            {/* 3. Pilih Jurusan (Kompetensi Keahlian) */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                <span>Pilih Jurusan:</span>
+              </label>
+              <select
+                value={filterDept}
+                onChange={(e) => {
+                  const newDept = e.target.value;
+                  setFilterDept(newDept);
+                  if (newDept && filterClass) {
+                    const matchCls = classes.find(c => (c.name === filterClass || c.id === filterClass) && (c.department_code === newDept || c.department_id === newDept));
+                    if (!matchCls) setFilterClass('');
+                  }
+                }}
+                className={`w-full px-3 py-2 rounded-xl font-bold border transition-colors cursor-pointer shadow-2xs ${
+                  filterDept ? 'bg-blue-50/80 border-blue-400 text-blue-900' : 'bg-slate-50 border-slate-300 text-slate-800'
+                }`}
+              >
+                <option value="">-- Semua Jurusan (8 Keahlian) --</option>
+                {departments.map(d => (
+                  <option key={d.code} value={d.code}>
+                    {d.code} &bull; {d.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 4. Pilih Rombel / Kelas */}
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1 flex items-center gap-1">
+                <School className="w-3.5 h-3.5 text-blue-600" />
+                <span>Pilih Kelas:</span>
+              </label>
+              <select
+                value={filterClass}
+                onChange={(e) => setFilterClass(e.target.value)}
+                className={`w-full px-3 py-2 rounded-xl font-bold border transition-colors cursor-pointer shadow-2xs ${
+                  filterClass ? 'bg-blue-50/80 border-blue-400 text-blue-900' : 'bg-slate-50 border-slate-300 text-slate-800'
+                }`}
+              >
+                <option value="">
+                  {filterDept ? `-- Semua Kelas di ${filterDept} (${availableClasses.length} Rombel) --` : `-- Semua Kelas (${classes.length} Rombel) --`}
+                </option>
+                {availableClasses.map(c => (
+                  <option key={c.id} value={c.name}>
+                    {c.name} &bull; {c.department_code}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Status Badge Ringkasan Filter Terpilih */}
+          <div className="flex flex-wrap items-center gap-2 pt-2 text-[11px] bg-slate-50/80 p-2.5 rounded-xl border border-slate-200">
+            <span className="font-semibold text-slate-500">Cakupan Dokumen:</span>
+            {reportType === 'bulanan' && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold border border-blue-200">
+                <Calendar className="w-3 h-3 text-blue-600" />
+                Bulan: {selectedMonthName} {selectedYear}
+              </span>
+            )}
+            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold border ${
+              filterDept ? 'bg-indigo-100 text-indigo-800 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200'
+            }`}>
+              <Building2 className="w-3 h-3 text-indigo-600" />
+              Jurusan: {filterDept ? filterDept : 'Semua Jurusan'}
+            </span>
+            <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold border ${
+              filterClass ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-100 text-slate-700 border-slate-200'
+            }`}>
+              <School className="w-3 h-3 text-purple-600" />
+              Kelas: {filterClass ? filterClass : 'Semua Kelas'}
+            </span>
+            <span className="ml-auto font-black text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+              {filteredRecords.length} Data Keterlambatan
+            </span>
           </div>
         </div>
       </div>
@@ -289,31 +498,41 @@ export const ReportsView: React.FC = () => {
 
         {/* Report Metadata */}
         <div className="text-center mb-6">
-          <h2 className="text-base font-black uppercase tracking-wider text-slate-900">
+          <h2 className="text-base sm:text-lg font-black uppercase tracking-wider text-slate-900 leading-snug">
             {currentReportTitle.toUpperCase()}
           </h2>
-          <p className="text-xs text-slate-600 mt-0.5">
-            Aplikasi PATROL SMESA — Periode {reportType === 'harian' ? formatIndonesianDate(selectedDate) : `Tahun Ajaran ${settings.academic_year}`}
+          <p className="text-xs text-slate-600 mt-1 font-medium">
+            Aplikasi PATROL SMESA &bull; Periode: <strong className="text-slate-900">{reportPeriodLabel}</strong>
+            {filterDept && <span> &bull; Jurusan: <strong className="text-blue-900">{filterDept}</strong></span>}
+            {filterClass && <span> &bull; Kelas: <strong className="text-blue-900">{filterClass}</strong></span>}
           </p>
         </div>
 
         {/* Summary Info */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs mb-6 print:bg-white">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs mb-6 print:bg-white print:border-slate-300">
           <div>
-            <span className="text-slate-500 block text-[10px]">Total Kasus:</span>
-            <span className="font-extrabold text-slate-900">{filteredRecords.length} Transaksi</span>
+            <span className="text-slate-500 block text-[10px]">Periode Laporan:</span>
+            <span className="font-bold text-slate-900 block truncate">{reportPeriodLabel}</span>
+          </div>
+          <div>
+            <span className="text-slate-500 block text-[10px]">Jurusan:</span>
+            <span className="font-bold text-blue-900 block truncate">{filterDept || 'Semua Jurusan'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500 block text-[10px]">Kelas:</span>
+            <span className="font-bold text-blue-900 block truncate">{filterClass || 'Semua Kelas'}</span>
+          </div>
+          <div>
+            <span className="text-slate-500 block text-[10px]">Total Keterlambatan:</span>
+            <span className="font-extrabold text-red-600 font-mono block">{filteredRecords.length} Transaksi</span>
           </div>
           <div>
             <span className="text-slate-500 block text-[10px]">Tanggal Cetak:</span>
-            <span className="font-bold text-slate-800">{formatIndonesianDate(getWIBTodayString())}</span>
+            <span className="font-bold text-slate-800 block">{formatIndonesianDate(getWIBTodayString())}</span>
           </div>
           <div>
             <span className="text-slate-500 block text-[10px]">Petugas Pencetak:</span>
-            <span className="font-bold text-slate-800">{currentUser.full_name}</span>
-          </div>
-          <div>
-            <span className="text-slate-500 block text-[10px]">Status Data:</span>
-            <span className="font-bold text-emerald-700">Terverifikasi Database</span>
+            <span className="font-bold text-slate-800 block truncate">{currentUser.full_name}</span>
           </div>
         </div>
 
@@ -364,8 +583,13 @@ export const ReportsView: React.FC = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={8} className="p-6 text-center text-xs text-slate-400">
-                    Tidak ada catatan keterlambatan untuk periode ini.
+                  <td colSpan={8} className="p-8 text-center text-xs text-slate-500">
+                    <p className="font-bold text-slate-700 text-sm">Tidak Ada Catatan Keterlambatan</p>
+                    <p className="text-slate-500 mt-1">
+                      Tidak ditemukan data keterlambatan untuk {reportType === 'bulanan' ? `Bulan ${selectedMonthName} ${selectedYear}` : reportPeriodLabel}
+                      {filterDept ? ` pada Jurusan ${filterDept}` : ''}
+                      {filterClass ? ` Kelas ${filterClass}` : ''}.
+                    </p>
                   </td>
                 </tr>
               )}
