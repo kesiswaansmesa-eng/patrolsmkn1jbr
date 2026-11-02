@@ -804,9 +804,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logAudit('LOGIN', 'AUTENTIKASI', `Beralih ke peran ${role.toUpperCase()}: ${targetUser.full_name}`);
   }, [users, logAudit]);
 
-  const loginWithEmail = async (email: string, password?: string): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
-    const cleanEmail = email.trim().toLowerCase();
+  const loginWithEmail = async (identifier: string, password?: string): Promise<{ success: boolean; message: string; user?: UserProfile }> => {
+    const cleanId = identifier.trim().toLowerCase();
     const cleanPassword = (password || '').trim();
+
+    if (!cleanId) {
+      return { 
+        success: false, 
+        message: 'Username atau email wajib dimasukkan! Silakan isi kolom username/email.' 
+      };
+    }
 
     if (!cleanPassword) {
       return { 
@@ -815,8 +822,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Check user in state (synced with Google Sheets Pengguna_RBAC)
-    const foundUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // Check user in state by email, username prefix before @, role, or NIP
+    const foundUser = users.find(u => {
+      const uEmail = (u.email || '').toLowerCase().trim();
+      const uRole = (u.role || '').toLowerCase().trim();
+      const uNip = (u.nip || '').trim().toLowerCase();
+      const uPrefix = uEmail.includes('@') ? uEmail.split('@')[0] : uEmail;
+
+      return (
+        uEmail === cleanId ||
+        uPrefix === cleanId ||
+        uRole === cleanId ||
+        (uNip && uNip === cleanId)
+      );
+    });
+
     if (foundUser) {
       if (foundUser.status === 'inactive') {
         return {
@@ -844,7 +864,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     return { 
       success: false, 
-      message: `Akun dengan email "${email}" tidak ditemukan dalam database sistem.` 
+      message: `Akun "${identifier}" tidak ditemukan dalam database sistem. Pastikan username atau email sudah terdaftar.` 
     };
   };
 
