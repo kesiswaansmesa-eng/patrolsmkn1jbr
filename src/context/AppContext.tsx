@@ -413,9 +413,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setUsers(allData.users as UserProfile[]);
         }
 
-        // Update coachings
+        // Update coachings (Tabel Pembinaan_BK)
         if (Array.isArray(allData.coachings) && allData.coachings.length > 0) {
-          setCoachings(allData.coachings as CoachingRecord[]);
+          const freshCoachings = allData.coachings as CoachingRecord[];
+          setCoachings(freshCoachings);
+
+          // Sinkronisasi status pembinaan pada transaksi keterlambatan sesuai data aktual tabel Pembinaan_BK
+          const latestCoachingMap = new Map<string, FollowUpStatus>();
+          [...freshCoachings]
+            .sort((a, b) => (b.coaching_date || '').localeCompare(a.coaching_date || ''))
+            .forEach(c => {
+              if (c.student_id && !latestCoachingMap.has(c.student_id)) {
+                latestCoachingMap.set(c.student_id, c.status);
+              }
+              if (c.nis && !latestCoachingMap.has(c.nis)) {
+                latestCoachingMap.set(c.nis, c.status);
+              }
+            });
+
+          setRecords(prev => prev.map(r => {
+            const updatedStatus = latestCoachingMap.get(r.student_id) || latestCoachingMap.get(r.nis);
+            return updatedStatus ? { ...r, followup_status: updatedStatus } : r;
+          }));
         }
 
         // Update settings (Pimpinan Sekolah & Konfigurasi Operasional)
@@ -1117,13 +1136,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     setCoachings(prev => [newCoaching, ...prev]);
 
-    if (data.lateness_record_id) {
-      setRecords(prev => prev.map(r => r.id === data.lateness_record_id ? {
-        ...r,
-        followup_status: data.status,
-        coaching_summary: `${data.coaching_type}: ${data.target_improvement}`
-      } : r));
-    }
+    // Sinkronisasi status pembinaan ke seluruh transaksi keterlambatan siswa terkait
+    setRecords(prev => prev.map(r => {
+      const isMatch = r.student_id === data.student_id || 
+                      (data.nis && r.nis === data.nis) || 
+                      (data.lateness_record_id && r.id === data.lateness_record_id);
+      if (isMatch) {
+        return {
+          ...r,
+          followup_status: data.status,
+          coaching_summary: `${data.coaching_type}: ${data.target_improvement}`
+        };
+      }
+      return r;
+    }));
 
     if (isGoogleSheetsConnected) {
       postToGoogleSheets('syncAll', {
@@ -1137,11 +1163,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const updateCoachingStatus = async (id: string, status: FollowUpStatus, evaluationResult?: string) => {
+    const target = coachings.find(c => c.id === id);
     setCoachings(prev => prev.map(c => c.id === id ? {
       ...c,
       status,
       evaluation_result: evaluationResult || c.evaluation_result,
     } : c));
+
+    // Sinkronisasi status pembinaan ke transaksi keterlambatan siswa terkait
+    if (target) {
+      setRecords(prev => prev.map(r => {
+        const isMatch = r.student_id === target.student_id || (target.nis && r.nis === target.nis);
+        if (isMatch) {
+          return {
+            ...r,
+            followup_status: status,
+          };
+        }
+        return r;
+      }));
+    }
 
     logAudit('UPDATE', 'PEMBINAAN', `Memperbarui status pembinaan ${id} menjadi ${status}`, id);
   };
