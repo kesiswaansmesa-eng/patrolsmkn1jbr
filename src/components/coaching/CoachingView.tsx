@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  HeartHandshake, ShieldAlert, Plus, Search, Calendar, 
+  HeartHandshake, ShieldAlert, Plus, Calendar, 
   UserCheck, AlertTriangle, CheckCircle2, Lock, Eye, 
-  FileText, Clock, ChevronRight, Save, User
+  FileText, Clock, ChevronRight, Save, User,
+  Filter, Building2, School, RotateCcw
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { CoachingRecord, FollowUpStatus, Student } from '../../types';
@@ -11,12 +12,42 @@ import { formatIndonesianDate, getWIBTodayString } from '../../utils/dateUtils';
 export const CoachingView: React.FC = () => {
   const { 
     scopedRecords, scopedStudents, coachings, addCoaching, 
-    updateCoachingStatus, currentUser, settings 
+    updateCoachingStatus, currentUser, settings,
+    departments, classes, scopedClasses
   } = useApp();
 
-  const [searchStudent, setSearchStudent] = useState('');
+  // Filter Jurusan & Kelas (menggantikan search teks siswa terlambat)
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('');
+  const [selectedClass, setSelectedClass] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  // Daftar kelas yang disesuaikan secara dinamis berdasarkan jurusan terpilih
+  const availableClasses = useMemo(() => {
+    const classPool = scopedClasses && scopedClasses.length > 0 ? scopedClasses : classes;
+    if (!selectedDepartment) return classPool;
+    return classPool.filter(
+      c => c.department_code === selectedDepartment || c.department_id === selectedDepartment
+    );
+  }, [classes, scopedClasses, selectedDepartment]);
+
+  const handleDepartmentChange = (deptCode: string) => {
+    setSelectedDepartment(deptCode);
+    if (deptCode && selectedClass) {
+      const match = classes.find(
+        c => (c.name === selectedClass || c.id === selectedClass) &&
+             (c.department_code === deptCode || c.department_id === deptCode)
+      );
+      if (!match) {
+        setSelectedClass('');
+      }
+    }
+  };
+
+  const handleResetFilters = () => {
+    setSelectedDepartment('');
+    setSelectedClass('');
+  };
 
   // Form State for new coaching
   const [coachingForm, setCoachingForm] = useState<{
@@ -37,7 +68,7 @@ export const CoachingView: React.FC = () => {
     is_confidential: false,
   });
 
-  // Calculate repeat students (exceeding SP threshold)
+  // Filter daftar siswa terlambat berdasarkan Jurusan & Kelas
   const studentsWithLateness = useMemo(() => {
     return scopedStudents.map(student => {
       const studentRecords = scopedRecords.filter(r => r.student_id === student.id && !r.is_cancelled);
@@ -57,13 +88,24 @@ export const CoachingView: React.FC = () => {
         isWarningSp2: totalCount >= settings.warning_threshold_sp2,
       };
     }).filter(s => {
-      if (searchStudent.trim()) {
-        const q = searchStudent.toLowerCase();
-        return s.full_name.toLowerCase().includes(q) || s.nis.includes(q) || s.class_name.toLowerCase().includes(q);
+      // Hanya tampilkan siswa yang memiliki catatan keterlambatan aktif
+      if (s.totalCount === 0) return false;
+
+      // Filter berdasarkan Jurusan (kode atau id)
+      if (selectedDepartment) {
+        const matchDept = s.department_code === selectedDepartment || s.department_id === selectedDepartment;
+        if (!matchDept) return false;
       }
-      return s.totalCount > 0;
+
+      // Filter berdasarkan Kelas (nama atau id)
+      if (selectedClass) {
+        const matchClass = s.class_name === selectedClass || s.class_id === selectedClass;
+        if (!matchClass) return false;
+      }
+
+      return true;
     }).sort((a, b) => b.totalCount - a.totalCount);
-  }, [scopedStudents, scopedRecords, coachings, searchStudent, settings]);
+  }, [scopedStudents, scopedRecords, coachings, selectedDepartment, selectedClass, settings]);
 
   const activeStudentDetail = useMemo(() => {
     if (!selectedStudentId) return null;
@@ -142,15 +184,81 @@ export const CoachingView: React.FC = () => {
         
         {/* Left: Student List (5 Cols) */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 shadow-xs p-4 space-y-4">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-            <input
-              type="text"
-              value={searchStudent}
-              onChange={(e) => setSearchStudent(e.target.value)}
-              placeholder="Cari siswa terlambat..."
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:outline-hidden focus:border-blue-600"
-            />
+          {/* Filter Jurusan dan Kelas */}
+          <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                <Filter className="w-3.5 h-3.5 text-blue-600" />
+                Filter Siswa Terlambat
+              </span>
+              {(selectedDepartment || selectedClass) && (
+                <button
+                  type="button"
+                  onClick={handleResetFilters}
+                  className="text-[10px] text-blue-600 hover:text-blue-800 font-bold flex items-center gap-1 hover:underline cursor-pointer"
+                  title="Reset filter ke Semua Jurusan dan Kelas"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {/* Dropdown Jurusan */}
+              <div className="space-y-1">
+                <label className="block text-[10px] font-extrabold text-slate-600 flex items-center gap-1">
+                  <Building2 className="w-3 h-3 text-slate-400" />
+                  Jurusan:
+                </label>
+                <select
+                  value={selectedDepartment}
+                  onChange={(e) => handleDepartmentChange(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:border-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                >
+                  <option value="">Semua Jurusan</option>
+                  {departments.map((dept) => (
+                    <option key={dept.id} value={dept.code}>
+                      {dept.code} - {dept.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Dropdown Kelas */}
+              <div className="space-y-1">
+                <label className="block text-[10px] font-extrabold text-slate-600 flex items-center gap-1">
+                  <School className="w-3 h-3 text-slate-400" />
+                  Kelas:
+                </label>
+                <select
+                  value={selectedClass}
+                  onChange={(e) => setSelectedClass(e.target.value)}
+                  className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:border-blue-600 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                >
+                  <option value="">Semua Kelas</option>
+                  {availableClasses.map((cls) => (
+                    <option key={cls.id} value={cls.name}>
+                      {cls.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Total Siswa Terlambat Sesuai Filter */}
+            <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-200 text-slate-500 font-medium">
+              <span>
+                Total Terlambat: <strong className="text-slate-900 font-bold">{studentsWithLateness.length}</strong> siswa
+              </span>
+              {(selectedDepartment || selectedClass) ? (
+                <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                  {selectedDepartment || 'Semua Jurusan'} • {selectedClass || 'Semua Kelas'}
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-400">Seluruh Jurusan & Rombel</span>
+              )}
+            </div>
           </div>
 
           <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
@@ -197,8 +305,8 @@ export const CoachingView: React.FC = () => {
                 );
               })
             ) : (
-              <div className="text-center py-10 text-xs text-slate-400">
-                Tidak ada siswa yang sesuai pencarian.
+              <div className="text-center py-10 text-xs text-slate-400 px-4">
+                Tidak ada data siswa terlambat pada filter Jurusan & Kelas ini.
               </div>
             )}
           </div>
