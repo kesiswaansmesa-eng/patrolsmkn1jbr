@@ -3,11 +3,26 @@ import {
   Trophy, Medal, Award, CheckCircle2, AlertTriangle, AlertCircle,
   HelpCircle, Sparkles, Filter, ChevronRight, School, Building2,
   UserCheck, Users, Search, Database, ShieldCheck, Check,
-  ChevronLeft, ChevronsLeft, ChevronsRight
+  ChevronLeft, ChevronsLeft, ChevronsRight, Calendar, RotateCcw
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { formatIndonesianDate, isDateThisWeek, isDateThisMonth } from '../../utils/dateUtils';
+import { formatIndonesianDate, isDateThisWeek, isDateThisMonth, normalizeDateString } from '../../utils/dateUtils';
 import confetti from 'canvas-confetti';
+
+const MONTHS_INDONESIAN = [
+  { value: 1, name: 'Januari' },
+  { value: 2, name: 'Februari' },
+  { value: 3, name: 'Maret' },
+  { value: 4, name: 'April' },
+  { value: 5, name: 'Mei' },
+  { value: 6, name: 'Juni' },
+  { value: 7, name: 'Juli' },
+  { value: 8, name: 'Agustus' },
+  { value: 9, name: 'September' },
+  { value: 10, name: 'Oktober' },
+  { value: 11, name: 'November' },
+  { value: 12, name: 'Desember' },
+];
 
 export const LeaderboardView: React.FC = () => {
   const { classes, departments, records, students, settings, isGoogleSheetsConnected } = useApp();
@@ -15,20 +30,63 @@ export const LeaderboardView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'zero_students' | 'classes' | 'departments'>('zero_students');
   const [timePeriod, setTimePeriod] = useState<'all' | 'month' | 'week'>('month');
 
+  // Filter Bulan & Tahun
+  const [filterMonth, setFilterMonth] = useState<string>(''); // '' = Semua Bulan, atau '1' s/d '12'
+  const [filterYear, setFilterYear] = useState<string>('');   // '' = Semua Tahun
+
+  // Daftar tahun dari catatan keterlambatan di database
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<number>();
+    const currentYear = new Date().getFullYear();
+    yearsSet.add(currentYear);
+    yearsSet.add(2025);
+    yearsSet.add(2026);
+    records.forEach(r => {
+      if (r.event_date) {
+        const y = parseInt(r.event_date.substring(0, 4), 10);
+        if (!isNaN(y) && y >= 2020 && y <= 2035) {
+          yearsSet.add(y);
+        }
+      }
+    });
+    return Array.from(yearsSet).sort((a, b) => b - a);
+  }, [records]);
+
+  // Label periode evaluasi aktif
+  const activePeriodLabel = useMemo(() => {
+    if (filterMonth) {
+      const mName = MONTHS_INDONESIAN.find(m => String(m.value) === filterMonth)?.name || `Bulan ${filterMonth}`;
+      return `${mName} ${filterYear || ''}`.trim();
+    }
+    if (timePeriod === 'week') return 'Minggu Ini';
+    if (timePeriod === 'month') return `Bulan Ini (${MONTHS_INDONESIAN[new Date().getMonth()].name})`;
+    return 'Semua Periode';
+  }, [filterMonth, filterYear, timePeriod]);
+
   // Filters for Siswa Teladan (Zero Late)
   const [searchStudent, setSearchStudent] = useState('');
   const [gradeFilter, setGradeFilter] = useState<'ALL' | 'X' | 'XI' | 'XII'>('ALL');
   const [classFilter, setClassFilter] = useState<string>('');
 
-  // Filter records based on time period
+  // Filter records based on time period & month filter
   const activeRecords = useMemo(() => {
     return records.filter(r => {
       if (r.is_cancelled) return false;
+      if (filterMonth || filterYear) {
+        const normalized = normalizeDateString(r.event_date);
+        const [yStr, mStr] = normalized.split('-');
+        const yNum = parseInt(yStr, 10);
+        const mNum = parseInt(mStr, 10);
+
+        if (filterMonth && mNum !== parseInt(filterMonth, 10)) return false;
+        if (filterYear && yNum !== parseInt(filterYear, 10)) return false;
+        return true;
+      }
       if (timePeriod === 'week') return isDateThisWeek(r.event_date);
       if (timePeriod === 'month') return isDateThisMonth(r.event_date);
       return true;
     });
-  }, [records, timePeriod]);
+  }, [records, timePeriod, filterMonth, filterYear]);
 
   // Set of student IDs and NIS that have lateness records in the database
   const lateStudentIdentifiers = useMemo(() => {
@@ -91,7 +149,7 @@ export const LeaderboardView: React.FC = () => {
 
   useEffect(() => {
     setZeroPage(1);
-  }, [gradeFilter, classFilter, searchStudent, timePeriod, zeroPageSize]);
+  }, [gradeFilter, classFilter, searchStudent, timePeriod, filterMonth, filterYear, zeroPageSize]);
 
   const totalZeroPages = zeroPageSize === -1 ? 1 : Math.max(1, Math.ceil(filteredZeroStudents.length / zeroPageSize));
   const paginatedZeroStudents = useMemo(() => {
@@ -217,32 +275,150 @@ export const LeaderboardView: React.FC = () => {
           </p>
         </div>
 
-        {/* Period Selector */}
-        <div className="bg-white/95 backdrop-blur-md p-1.5 sm:p-2 rounded-xl border border-amber-300/80 flex items-center gap-1 shadow-xs self-start md:self-center shrink-0">
-          <button
-            onClick={() => setTimePeriod('week')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              timePeriod === 'week' ? 'bg-slate-950 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-100'
-            }`}
+        {/* Period & Month Selector in Header Banner */}
+        <div className="bg-white/95 backdrop-blur-md p-2 rounded-xl border border-amber-300/80 shadow-xs flex flex-wrap items-center gap-1.5 self-start md:self-center shrink-0">
+          {/* Dropdown Pilihan Bulan */}
+          <div className="flex items-center gap-1 bg-amber-50/80 px-2 py-1 rounded-lg border border-amber-200/80">
+            <Calendar className="w-3.5 h-3.5 text-amber-700 shrink-0" />
+            <select
+              value={filterMonth}
+              onChange={(e) => {
+                const val = e.target.value;
+                setFilterMonth(val);
+                if (val && !filterYear) {
+                  setFilterYear(String(new Date().getFullYear()));
+                }
+              }}
+              className="bg-transparent text-xs font-bold text-slate-900 focus:outline-hidden cursor-pointer"
+            >
+              <option value="">Semua Bulan</option>
+              {MONTHS_INDONESIAN.map(m => (
+                <option key={m.value} value={String(m.value)}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Dropdown Tahun */}
+          <select
+            value={filterYear}
+            onChange={(e) => setFilterYear(e.target.value)}
+            className="px-2 py-1 bg-amber-50/80 border border-amber-200/80 rounded-lg text-xs font-bold text-slate-900 focus:outline-hidden cursor-pointer"
           >
-            Minggu Ini
-          </button>
+            <option value="">Semua Tahun</option>
+            {availableYears.map(yr => (
+              <option key={yr} value={String(yr)}>
+                {yr}
+              </option>
+            ))}
+          </select>
+
+          {/* Quick Buttons */}
           <button
-            onClick={() => setTimePeriod('month')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              timePeriod === 'month' ? 'bg-slate-950 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-100'
+            onClick={() => {
+              const now = new Date();
+              setFilterMonth(String(now.getMonth() + 1));
+              setFilterYear(String(now.getFullYear()));
+            }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              filterMonth === String(new Date().getMonth() + 1) && filterYear === String(new Date().getFullYear())
+                ? 'bg-slate-950 text-amber-300 shadow-xs'
+                : 'text-slate-700 hover:bg-slate-100'
             }`}
           >
             Bulan Ini
           </button>
           <button
-            onClick={() => setTimePeriod('all')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              timePeriod === 'all' ? 'bg-slate-950 text-white shadow-xs' : 'text-slate-700 hover:bg-slate-100'
+            onClick={() => {
+              setFilterMonth('');
+              setFilterYear('');
+              setTimePeriod('week');
+            }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              !filterMonth && timePeriod === 'week' ? 'bg-slate-950 text-amber-300 shadow-xs' : 'text-slate-700 hover:bg-slate-100'
             }`}
           >
-            Semua Periode
+            Minggu Ini
           </button>
+          <button
+            onClick={() => {
+              setFilterMonth('');
+              setFilterYear('');
+              setTimePeriod('all');
+            }}
+            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              !filterMonth && !filterYear && timePeriod === 'all' ? 'bg-slate-950 text-amber-300 shadow-xs' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            Semua
+          </button>
+          {(filterMonth || filterYear) && (
+            <button
+              onClick={() => {
+                setFilterMonth('');
+                setFilterYear('');
+                setTimePeriod('all');
+              }}
+              className="p-1 text-slate-500 hover:text-slate-900 rounded-md hover:bg-slate-100 cursor-pointer"
+              title="Reset Filter Bulan"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Baris Filter Bulan Cepat (Januari, Feb, Maret, April, Mei, Juni, Juli, Agustus, Sep, Oktober, November, Desember) */}
+      <div className="bg-white rounded-2xl p-3 border border-slate-200 shadow-xs space-y-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
+          <span className="font-extrabold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider text-[11px]">
+            <Calendar className="w-3.5 h-3.5 text-blue-600" />
+            Pilihan Bulan Evaluasi Disiplin:
+          </span>
+          <span className="text-[11px] font-bold text-slate-600 bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-200">
+            Periode: <strong className="text-blue-700">{activePeriodLabel}</strong>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              setFilterMonth('');
+              setFilterYear('');
+              setTimePeriod('all');
+            }}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+              !filterMonth && timePeriod === 'all'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            Semua Bulan
+          </button>
+          {MONTHS_INDONESIAN.map(m => {
+            const isSelected = filterMonth === String(m.value);
+            return (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => {
+                  setFilterMonth(String(m.value));
+                  if (!filterYear) {
+                    setFilterYear(String(new Date().getFullYear()));
+                  }
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer shrink-0 ${
+                  isSelected
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {m.name}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -396,7 +572,7 @@ export const LeaderboardView: React.FC = () => {
                   Data Siswa Zero Late Diambil Langsung dari Database Aktif
                 </span>
                 <span className="text-[11px] text-emerald-800">
-                  Total Basis Data: <strong>{students.length} Siswa Master</strong> &bull; Total Riwayat Transaksi: <strong>{activeRecords.length} Catatan</strong> ({timePeriod === 'all' ? 'Seluruh Waktu' : timePeriod === 'month' ? 'Bulan Ini' : 'Minggu Ini'}).
+                  Total Basis Data: <strong>{students.length} Siswa Master</strong> &bull; Total Riwayat Transaksi: <strong>{activeRecords.length} Catatan</strong> (Periode: <strong>{activePeriodLabel}</strong>).
                 </span>
               </div>
             </div>
